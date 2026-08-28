@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "83946690351",
+    "project_id": "scrap-1a355",
+    "storage_bucket": "scrap-1a355.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:83946690351:android:d344585da42998d1f1b3da",
+        "android_client_info": {
+          "package_name": "com.memories.scrap"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCZ8sgOXLOPP7Y7i3CJO1GOtCtc2V3BfEM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
