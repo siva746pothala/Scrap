@@ -1951,3 +1951,9 @@ body:has(.avatar-preview-overlay) .scrap-ad-card {
   opacity: 0 !important;
   pointer-events: none !important;
 }
+
+/* Fix to ensure input fields focus on a single tap by overriding body's select-none */
+input, textarea, [contenteditable] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}

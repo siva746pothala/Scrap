@@ -16,8 +16,9 @@ We may collect:
 - Username
 - Email address
 - Profile photo, if you choose to upload one
+- City or regional area location (provided during registration)
 
-This information is used to create and manage your account, identify you in shared rooms, and support sign-in and account recovery.
+This information is used to create and manage your account, identify you in shared rooms, support sign-in and account recovery, and customize localized features.
 
 ### 1.2 User-Generated Content
 The App allows you to create and share content within collaborative rooms. This may include:
@@ -77,11 +78,18 @@ We may share information only in the following limited circumstances:
 
 Please note that any content you share in a room may be visible to the members of that room, as designed by the App.
 
-## 5. Data Security
+## 5. Data Security and End-to-End Encryption (E2EE)
 
-We implement reasonable technical and organizational safeguards to protect user information. The App uses encryption for selected data protection flows and secure handling of room keys and shared content. We also limit access to user data to authorized systems and personnel.
+We prioritize user privacy and implement industry-standard safeguards to protect your personal information:
 
-While we take steps to protect information, no method of transmission or storage is completely risk-free. We encourage users to keep their account credentials secure and to use the App only in trusted environments.
+### 5.1 End-to-End Encryption (E2EE)
+To protect your shared media, the App employs **End-to-End Encryption (E2EE)** specifically for user-uploaded room photos:
+- **Local Encryption**: Uploaded photos are encrypted directly on your device using advanced cryptographic algorithms before they are uploaded to our hosting servers.
+- **Zero-Knowledge Storage**: Room encryption keys are generated locally and stored securely inside your device's private vault. We do not have access to, nor do we store, your private encryption keys on our servers. Consequently, **we cannot decrypt, read, or monitor your encrypted photos.**
+- **Authorized Sharing**: Only users whom you explicitly invite (via secure QR codes or invite links) can receive the keys required to decrypt and view the room content.
+
+### 5.2 Device and Transmission Security
+We use HTTPS and Secure Sockets Layer (SSL) protocols to protect account metadata in transit. While we take every effort to secure data, no method of transmission is completely risk-free. You are responsible for keeping your device secure and protecting your identity keys or device credentials.
 
 ## 6. Data Retention and Deletion
 
@@ -93,9 +101,16 @@ If you want to request account or data deletion, contact the developer support e
 
 ## 7. Third-Party Services and Advertising
 
-The App may use services that support hosting, authentication, notifications, storage, and app performance. These services may process limited user data as necessary to provide those functions.
+The App utilizes third-party services that support hosting, authentication, notifications, storage, and app performance. These services may process limited user data as necessary to provide those functions.
 
-The App does not use third-party behavioral advertising for targeted tracking or sale of personal data. If promotional content is shown in the future, it will be limited, clearly labeled, and handled in compliance with applicable privacy requirements.
+### 7.1 Google AdMob
+We use **Google AdMob** to display advertisements in the App. To serve ads, prevent fraud, and compile analytics, the Google AdMob SDK automatically collects and processes certain user and device information, including:
+- **Google Advertising ID (AD_ID)**
+- Device identifiers and diagnostic/performance logs
+- IP address and approximate location
+- Ad interaction data (views, clicks, and impressions)
+
+For more information on how Google handles and protects your data, please review the [Google Privacy & Terms Policy](https://policies.google.com/privacy). You can manage personalized ad settings or reset your Advertising ID via your Android device's security settings.
 
 ## 8. Data Storage and Server Location
 

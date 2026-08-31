@@ -28,6 +28,7 @@ const ScrapApp = {
   dismissSplash() {
     const splash = document.getElementById('scrap-loading-splash');
     if (splash) {
+      splash.style.pointerEvents = 'none'; // Instantly let clicks pass through to inputs during the fade-out transition
       splash.classList.add('splash-fade-out');
       setTimeout(() => {
         splash.remove();
@@ -1233,6 +1234,15 @@ const ScrapApp = {
       this.authMode = 'login';
       this.dismissSplash();
       this.showScreen('screen-gateway');
+      setTimeout(() => {
+        const idInput = document.getElementById('input-auth-identity');
+        if (idInput && !idInput.classList.contains('hidden') && !idInput.disabled) {
+          idInput.focus();
+          if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
+            window.Capacitor.Plugins.Keyboard.show().catch(() => {});
+          }
+        }
+      }, 300);
 
     } catch (err) {
       console.error('[ScrapApp] checkSession error:', err);
@@ -1361,6 +1371,15 @@ const ScrapApp = {
 
       if (screenId === 'screen-gateway') {
         this.updateGatewayVisuals();
+        setTimeout(() => {
+          const idInput = document.getElementById('input-auth-identity');
+          if (idInput && !idInput.classList.contains('hidden') && !idInput.disabled) {
+            idInput.focus();
+            if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
+              window.Capacitor.Plugins.Keyboard.show().catch(() => {});
+            }
+          }
+        }, 200);
       }
 
       // Handle AdMob Banner showing/hiding dynamically depending on the active screen
@@ -1654,6 +1673,37 @@ const ScrapApp = {
     const areaInput = document.getElementById('input-auth-area');
     const authTitle = document.getElementById('auth-title');
 
+    // Single-tap focus fix to resolve Android WebView focus lag after biometric prompt dismiss
+    if (identityInput) {
+      const focusIdentity = (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        identityInput.focus();
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
+          window.Capacitor.Plugins.Keyboard.show().catch(() => {});
+        }
+      };
+      identityInput.addEventListener('click', focusIdentity);
+      identityInput.addEventListener('touchstart', focusIdentity, { passive: true });
+    }
+    if (nameInput) {
+      nameInput.addEventListener('click', (e) => {
+        e.stopPropagation();
+        nameInput.focus();
+      });
+    }
+    if (usernameInput) {
+      usernameInput.addEventListener('click', (e) => {
+        e.stopPropagation();
+        usernameInput.focus();
+      });
+    }
+    if (areaInput) {
+      areaInput.addEventListener('click', (e) => {
+        e.stopPropagation();
+        areaInput.focus();
+      });
+    }
+
     // Hide password input and register toggle button (WhatsApp style flow)
     if (passwordInput) passwordInput.style.display = 'none';
     if (toggleBtn) toggleBtn.style.display = 'none';
@@ -1691,25 +1741,54 @@ const ScrapApp = {
       });
     }
 
-    // Auto-scroll input fields into view when focused (helps keep fields visible above mobile keypad)
-    const authFormInputs = [nameInput, usernameInput, areaInput];
+    // Auto-scroll input fields and Continue button into view when focused (gentle scroll)
+    const scrollToAuthSubmit = () => {
+      const gateway = document.getElementById('screen-gateway');
+      const submitBtn = document.getElementById('btn-auth-submit');
+      if (gateway && !gateway.classList.contains('hidden') && submitBtn) {
+        gateway.style.paddingBottom = '160px';
+        setTimeout(() => {
+          submitBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 120);
+      }
+    };
+
+    const resetGatewayScrollPadding = () => {
+      const gateway = document.getElementById('screen-gateway');
+      if (gateway) {
+        gateway.style.paddingBottom = '';
+      }
+    };
+
+    const authFormInputs = [identityInput, nameInput, usernameInput, areaInput];
     authFormInputs.forEach(input => {
       if (input) {
         input.addEventListener('focus', () => {
-          setTimeout(() => {
-            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }, 250);
+          setTimeout(scrollToAuthSubmit, 180);
         });
       }
     });
 
     if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
-      window.addEventListener('keyboardDidShow', () => {
-        const activeEl = document.activeElement;
-        if (activeEl && (activeEl.id === 'input-auth-name' || activeEl.id === 'input-auth-username' || activeEl.id === 'input-auth-area')) {
-          activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      });
+      const { Keyboard } = window.Capacitor.Plugins;
+      if (typeof Keyboard.addListener === 'function') {
+        Keyboard.addListener('keyboardDidShow', (info) => {
+          const gateway = document.getElementById('screen-gateway');
+          const submitBtn = document.getElementById('btn-auth-submit');
+          if (gateway && !gateway.classList.contains('hidden') && submitBtn) {
+            const kHeight = (info && info.keyboardHeight) ? Math.min(info.keyboardHeight * 0.5, 180) : 160;
+            gateway.style.paddingBottom = `${kHeight}px`;
+            setTimeout(() => {
+              submitBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 80);
+          }
+        });
+        Keyboard.addListener('keyboardDidHide', () => {
+          resetGatewayScrollPadding();
+        });
+      }
+      window.addEventListener('keyboardDidShow', scrollToAuthSubmit);
+      window.addEventListener('keyboardDidHide', resetGatewayScrollPadding);
     }
 
     const autocompleteList = document.getElementById('area-autocomplete-list');
