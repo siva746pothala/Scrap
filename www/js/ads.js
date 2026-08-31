@@ -36,7 +36,7 @@ const ScrapAds = (() => {
     admobEnabled:            false,
     admobBannerUnitId:       '',
     admobInterstitialUnitId: '',
-    adEveryNRooms:           3,
+    adEveryNRooms:           6,
     maxAdsInList:            2,
     interstitialEveryNSaves: 3,
   };
@@ -51,6 +51,8 @@ const ScrapAds = (() => {
   let _saveCount  = 0;
   let _admobReady = false;
   let _pendingInterstitial = false;
+  let _lastInterstitialTime = 0;
+  let _admobBannerShowing = false;
 
   // ─────────────────────────────────────────────────────────────
   // CHECK USER AD ELIGIBILITY
@@ -122,7 +124,7 @@ const ScrapAds = (() => {
     if (typeof r.admob_enabled        === 'boolean') _config.admobEnabled             = r.admob_enabled;
     if (r.admob_banner_id)                           _config.admobBannerUnitId        = r.admob_banner_id;
     if (r.admob_interstitial_id)                     _config.admobInterstitialUnitId  = r.admob_interstitial_id;
-    if (typeof r.ad_every_n_rooms     === 'number')  _config.adEveryNRooms            = r.ad_every_n_rooms;
+    if (typeof r.ad_every_n_rooms     === 'number')  _config.adEveryNRooms            = Math.max(6, r.ad_every_n_rooms); // Policy safeguard: minimum 6 rooms to prevent excessive density
     if (typeof r.max_ads_in_list      === 'number')  _config.maxAdsInList             = r.max_ads_in_list;
     if (typeof r.interstitial_every_n === 'number')  _config.interstitialEveryNSaves  = r.interstitial_every_n;
   }
@@ -222,6 +224,36 @@ const ScrapAds = (() => {
     }
   }
 
+  async function _showAdMobBanner() {
+    if (!_config.admobEnabled || !_admobReady || !window.AdMob || !_config.admobBannerUnitId) return;
+    if (_admobBannerShowing) return;
+    try {
+      const { BannerAdPosition } = window.AdMob;
+      await AdMob.showBanner({
+        adId: _config.admobBannerUnitId,
+        position: BannerAdPosition.BOTTOM,
+        margin: 0,
+        isTesting: false,
+        npa: false
+      });
+      _admobBannerShowing = true;
+      console.log('[ScrapAds] AdMob banner displayed successfully');
+    } catch (e) {
+      console.warn('[ScrapAds] AdMob banner display failed:', e);
+    }
+  }
+
+  async function _hideAdMobBanner() {
+    if (!window.AdMob || !_admobBannerShowing) return;
+    try {
+      await AdMob.removeBanner();
+      _admobBannerShowing = false;
+      console.log('[ScrapAds] AdMob banner removed');
+    } catch (e) {
+      console.warn('[ScrapAds] AdMob banner remove failed:', e);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────
   // OPEN URL HELPER
   // ─────────────────────────────────────────────────────────────
@@ -300,44 +332,81 @@ const ScrapAds = (() => {
 
     bindClick(wrapper.querySelector('.scrap-custom-ad'), currentAd);
 
-    // Auto-scroll (cycle) ads dynamically if multiple ads are available
+    // Auto-scroll (cycle) ads dynamically if multiple ads are available and visible
     if (_ads.length > 1) {
-      const intervalId = setInterval(() => {
-        // Safeguard: clear interval if the element was removed from DOM
-        if (!document.body.contains(wrapper)) {
-          clearInterval(intervalId);
-          return;
-        }
+      let intervalId = null;
 
-        const card = wrapper.querySelector('.scrap-custom-ad');
-        if (!card) return;
-
-        // Step 1: Fade out
-        card.style.opacity = '0';
-
-        // Step 2: Swap content and fade back in after transition completes
-        setTimeout(() => {
+      const startCycle = () => {
+        if (intervalId) return;
+        intervalId = setInterval(() => {
           if (!document.body.contains(wrapper)) {
-            clearInterval(intervalId);
+            stopCycle();
             return;
           }
 
-          const currentIndex = _ads.findIndex(a => a.id === currentAd.id);
-          const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % _ads.length;
-          currentAd = _ads[nextIndex];
+          const card = wrapper.querySelector('.scrap-custom-ad');
+          if (!card) return;
 
-          wrapper.innerHTML = getHTML(currentAd);
-          const newCard = wrapper.querySelector('.scrap-custom-ad');
-          
-          bindClick(newCard, currentAd);
+          // Step 1: Fade out
+          card.style.opacity = '0';
 
-          // Force a reflow to trigger opacity transition
-          newCard.style.opacity = '0';
-          newCard.getBoundingClientRect(); 
-          newCard.style.opacity = '1';
-        }, 400);
+          // Step 2: Swap content and fade back in after transition completes
+          setTimeout(() => {
+            if (!document.body.contains(wrapper)) {
+              stopCycle();
+              return;
+            }
 
-      }, 30000); // Transition every 30 seconds (compliant with ad refresh rate policies)
+            const currentIndex = _ads.findIndex(a => a.id === currentAd.id);
+            const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % _ads.length;
+            currentAd = _ads[nextIndex];
+
+            wrapper.innerHTML = getHTML(currentAd);
+            const newCard = wrapper.querySelector('.scrap-custom-ad');
+            
+            bindClick(newCard, currentAd);
+
+            // Force a reflow to trigger opacity transition
+            newCard.style.opacity = '0';
+            newCard.getBoundingClientRect(); 
+            newCard.style.opacity = '1';
+          }, 400);
+
+        }, 30000); // Transition every 30 seconds (compliant with ad refresh rate policies)
+      };
+
+      const stopCycle = () => {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      };
+
+      // Set up IntersectionObserver to only refresh when ad card is in view
+      if (window.IntersectionObserver) {
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              startCycle();
+            } else {
+              stopCycle();
+            }
+          });
+        }, { threshold: 0.1 });
+        
+        observer.observe(wrapper);
+
+        // Clean up observer if element is destroyed
+        const destroyCheck = setInterval(() => {
+          if (!document.body.contains(wrapper)) {
+            observer.disconnect();
+            stopCycle();
+            clearInterval(destroyCheck);
+          }
+        }, 10000);
+      } else {
+        startCycle(); // Fallback if IntersectionObserver is not supported
+      }
     }
 
     return wrapper;
@@ -568,8 +637,23 @@ const ScrapAds = (() => {
     try {
       if (!_shouldShowAds()) return;
 
+      // If AdMob is enabled but no Interstitial ID is provided, skip interstitials completely
+      if (_config.admobEnabled && !_config.admobInterstitialUnitId) {
+        console.log('[ScrapAds] AdMob enabled but no Interstitial ID provided. Skipping interstitials.');
+        return;
+      }
+
+      const now = Date.now();
+      const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown between interstitials
+      if (now - _lastInterstitialTime < COOLDOWN_MS) {
+        console.log('[ScrapAds] Skipping interstitial: cooling down to prevent user disturbance.');
+        return;
+      }
+
+      _lastInterstitialTime = now;
+
       // Try AdMob first
-      if (_config.admobEnabled && _admobReady && window.AdMob) {
+      if (_config.admobEnabled && _admobReady && window.AdMob && _config.admobInterstitialUnitId) {
         try {
           await AdMob.prepareInterstitial({ adId: _config.admobInterstitialUnitId });
           await AdMob.showInterstitial();
@@ -703,6 +787,8 @@ const ScrapAds = (() => {
     init,
     injectIntoRoomsList,
     onMemorySaved,
+    showAdMobBanner: _showAdMobBanner,
+    hideAdMobBanner: _hideAdMobBanner,
     getConfig: () => ({ ..._config }),
     getAds:    () => [..._ads],
   };

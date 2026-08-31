@@ -3,5 +3,8 @@
   "appName": "Scrap",
   "webDir": "www",
   "plugins": {
+    "AdMob": {
+      "appId": "ca-app-pub-9623323518754705~7123389038"
+    }
   }
 }

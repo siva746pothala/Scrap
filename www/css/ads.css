@@ -261,10 +261,10 @@
   border-radius: 16px;
   overflow: hidden;
   cursor: pointer;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-  transition: transform 0.2s ease, background 0.2s ease;
+  background: #18181f; /* Dark distinct solid background */
+  border: 2px solid rgba(255, 255, 255, 0.25); /* Highly visible, thicker border */
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6);
+  transition: transform 0.2s ease, border-color 0.2s ease;
   -webkit-tap-highlight-color: transparent;
   display: flex;
 }
@@ -273,7 +273,7 @@
 .scrap-custom-ad.ad-standard-layout {
   align-items: center;
   gap: 14px;
-  padding: 16px;
+  padding: 20px 16px 16px 16px; /* Extra top padding to make room for label */
 }
 
 /* Banner Ad Layout (Large Image at Top) */
@@ -290,7 +290,7 @@
   overflow: hidden;
   position: relative;
   background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.15);
 }
 
 .scrap-custom-ad.ad-banner-layout .ad-banner-img {
@@ -302,44 +302,50 @@
 }
 
 .scrap-custom-ad.ad-banner-layout .ad-banner-footer {
-  padding: 10px 14px;
+  padding: 12px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   width: 100%;
   box-sizing: border-box;
-  background: rgba(0, 0, 0, 0.15);
+  background: #121216; /* Darker bottom bar */
   /* Sleek integrated bottom bar style */
 }
 
 .scrap-custom-ad:active {
   transform: scale(0.98);
+  border-color: var(--ad-accent, #39ff14);
 }
 
 /* Sponsored label */
 .scrap-custom-ad .ad-label {
   position: absolute;
-  top: 7px;
+  top: 6px;
   right: 10px;
-  font-size: 7px;
+  font-size: 8px;
   font-family: 'Space Grotesk', monospace, sans-serif;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.4);
-  font-weight: 600;
+  color: #000;
+  background: #e5e7eb; /* Solid gray badge */
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
   z-index: 2;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
 
 /* Semi-transparent background badge for Sponsored label over banner image */
 .scrap-custom-ad.ad-banner-layout .ad-label {
   top: 10px;
   right: 12px;
-  background: rgba(0, 0, 0, 0.6);
+  background: #f59e0b; /* Solid orange-yellow badge for banner ads */
+  color: #000;
   padding: 3px 8px;
   border-radius: 6px;
   backdrop-filter: blur(4px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(0,0,0,0.1);
 }
 
 /* Ad icon/image */

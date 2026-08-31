@@ -1362,6 +1362,15 @@ const ScrapApp = {
       if (screenId === 'screen-gateway') {
         this.updateGatewayVisuals();
       }
+
+      // Handle AdMob Banner showing/hiding dynamically depending on the active screen
+      if (window.ScrapAds) {
+        if (screenId === 'screen-dashboard') {
+          ScrapAds.showAdMobBanner();
+        } else {
+          ScrapAds.hideAdMobBanner();
+        }
+      }
     }
   },
 
