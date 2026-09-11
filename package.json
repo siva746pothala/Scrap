@@ -1,7 +1,7 @@
 {
-  "name": "scrap-app",
-  "version": "1.0.0",
-  "description": "Scrap - Visual Multiplayer E2EE Collage Board",
+  "name": "mitrava-app",
+  "version": "1.0.1",
+  "description": "Mitrava - Visual Multiplayer E2EE Collage Board",
   "main": "www/index.html",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

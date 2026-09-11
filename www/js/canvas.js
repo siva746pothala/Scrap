@@ -1146,11 +1146,108 @@ const ScrapCanvas = {
         if (data.stickers) {
           Object.entries(data.stickers).forEach(([stickerId, s]) => {
             const sEl = document.createElement('div');
-            sEl.className = 'absolute select-none pointer-events-none';
+            sEl.className = 'absolute select-none pointer-events-auto cursor-pointer group/sticker';
             // Position using relative center offset from photo card center (96, 108)
             sEl.style.left = `${96 + s.x}px`;
             sEl.style.top = `${108 + s.y}px`;
             sEl.style.transform = `translate(-50%, -50%) rotate(${s.rotation || 0}deg) scale(${s.scale || 1.0})`;
+
+            // Tap sticker to unlock/detach back to independent canvas board element
+            const handleDetachSticker = async (evt) => {
+              evt.stopPropagation();
+              if (evt.cancelable) evt.preventDefault();
+
+              let itemTypeName = "element";
+              if (s.type === 'doodle') itemTypeName = "drawing";
+              else if (s.type === 'sticker') itemTypeName = "graphic sticker";
+              else {
+                let isEmoji = false;
+                try {
+                  const emojiRegex = new RegExp('[\\p{Emoji_Presentation}\\p{Extended_Pictographic}]', 'u');
+                  isEmoji = s.text ? emojiRegex.test(s.text) : false;
+                } catch (e) {
+                  isEmoji = s.text ? (s.text.length <= 4 && /[^\x00-\x7F]/.test(s.text)) : false;
+                }
+                itemTypeName = isEmoji ? "emoji" : "text sticker";
+              }
+
+              if (await window.ScrapDialog.confirm(`🔓 Unlock & detach this ${itemTypeName} from this photo?`)) {
+                // Calculate absolute coordinates on canvas board for detached element
+                const photoScale = data.scale || 1.0;
+                const theta = data.rotation || 0;
+                const rad = theta * Math.PI / 180;
+                const rx = (s.x || 0) * photoScale;
+                const ry = (s.y || 0) * photoScale;
+
+                const dx = rx * Math.cos(rad) - ry * Math.sin(rad);
+                const dy = rx * Math.sin(rad) + ry * Math.cos(rad);
+
+                const PX = (data.x || 0) + 96;
+                const PY = (data.y || 0) + 108;
+
+                const newAbsCenterX = PX + dx;
+                const newAbsCenterY = PY + dy;
+
+                const detachedId = `${s.type || 'text'}_${Date.now()}`;
+                const newElement = {
+                  type: s.type || 'text',
+                  x: Math.round(newAbsCenterX - 50),
+                  y: Math.round(newAbsCenterY - 20),
+                  rotation: (data.rotation || 0) + (s.rotation || 0),
+                  scale: (photoScale) * (s.scale || 1.0),
+                  zIndex: ScrapCanvas.getMaxZIndex(s.type || 'text') + 1,
+                  date: data.date || ScrapCanvas.currentDate
+                };
+
+                if (s.type === 'doodle') {
+                  newElement.type = 'doodle';
+                  newElement.strokes = s.strokes || [];
+                  newElement.color = s.color || '#00FF66';
+                  newElement.width = s.width || 192;
+                  newElement.height = s.height || 192;
+                } else if (s.type === 'sticker') {
+                  newElement.type = 'sticker';
+                  newElement.src = s.src;
+                  newElement.width = s.width || 80;
+                  newElement.height = s.height || 80;
+                } else {
+                  newElement.text = s.text;
+                }
+
+                // 1. Remove sticker from photo local stickers map
+                delete data.stickers[stickerId];
+                if (Object.keys(data.stickers).length === 0) {
+                  delete data.stickers;
+                }
+
+                // 2. Add detached element to local canvas elements map
+                ScrapCanvas.elements[detachedId] = newElement;
+
+                // 3. Render updated photo DOM & new detached element DOM instantly
+                ScrapCanvas.renderOrUpdateElementDom(id, data);
+                ScrapCanvas.renderOrUpdateElementDom(detachedId, newElement);
+
+                // 4. Atomic save on Firebase
+                const updates = {};
+                updates[id] = data;
+                updates[detachedId] = newElement;
+                await ScrapFirebase.updateMultipleElements(ScrapFirebase.roomId, updates);
+              }
+            };
+
+            sEl.addEventListener('click', handleDetachSticker);
+            sEl.addEventListener('touchend', (e) => {
+              handleDetachSticker(e);
+            });
+
+            // Prevent touch/click events from bubbling up to parent polaroid photo card
+            const blockParentInteractions = (e) => {
+              e.stopPropagation();
+              if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            };
+            sEl.addEventListener('pointerdown', blockParentInteractions);
+            sEl.addEventListener('mousedown', blockParentInteractions);
+            sEl.addEventListener('touchstart', blockParentInteractions);
 
             if (s.type === 'doodle') {
               sEl.style.width = `${s.width || 192}px`;
@@ -2699,9 +2796,9 @@ const ScrapCanvas = {
         picker.style.display = 'flex';
         picker.style.flexDirection = 'row';
         picker.style.alignItems = 'center';
-        picker.style.padding = '4px 6px';
+        picker.style.padding = '8px 14px';
         picker.style.backgroundColor = '#120921';
-        picker.style.border = '1.5px solid rgba(168, 85, 247, 0.7)';
+        picker.style.border = '2px solid rgba(168, 85, 247, 0.8)';
         picker.style.borderRadius = '9999px';
         picker.style.boxShadow = '0 12px 30px rgba(0,0,0,0.85)';
         picker.style.zIndex = '3000';
@@ -2728,23 +2825,33 @@ const ScrapCanvas = {
         }
 
         picker.innerHTML = `
-          <button class="picker-scroll-btn scroll-left text-purple-400 font-bold px-1 select-none active:scale-75 transition-transform" style="font-size: 16px; background: none; border: none; outline: none; cursor: pointer;">◀</button>
-          <div class="reaction-scroll-track flex flex-row items-center gap-[15px] overflow-x-auto" style="max-width: 170px; white-space: nowrap; -webkit-overflow-scrolling: touch; pointer-events: auto;">
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="❤️" style="cursor:pointer; font-size: 28px;">❤️</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🔥" style="cursor:pointer; font-size: 28px;">🔥</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😂" style="cursor:pointer; font-size: 28px;">😂</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="💀" style="cursor:pointer; font-size: 28px;">💀</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🎉" style="cursor:pointer; font-size: 28px;">🎉</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="💯" style="cursor:pointer; font-size: 28px;">💯</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="👍" style="cursor:pointer; font-size: 28px;">👍</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😮" style="cursor:pointer; font-size: 28px;">😮</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😢" style="cursor:pointer; font-size: 28px;">😢</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😡" style="cursor:pointer; font-size: 28px;">😡</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🙌" style="cursor:pointer; font-size: 28px;">🙌</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="✨" style="cursor:pointer; font-size: 28px;">✨</span>
-            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="👀" style="cursor:pointer; font-size: 28px;">👀</span>
+          <button class="picker-scroll-btn scroll-left text-purple-400 font-bold px-2 select-none active:scale-75 transition-transform" style="font-size: 22px; background: none; border: none; outline: none; cursor: pointer;">◀</button>
+          <div class="reaction-scroll-track flex flex-row items-center gap-[24px] overflow-x-auto" style="max-width: 300px; white-space: nowrap; -webkit-overflow-scrolling: touch; pointer-events: auto;">
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😊" style="cursor:pointer; font-size: 34px;">😊</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🙂" style="cursor:pointer; font-size: 34px;">🙂</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😀" style="cursor:pointer; font-size: 34px;">😀</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😁" style="cursor:pointer; font-size: 34px;">😁</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🥰" style="cursor:pointer; font-size: 34px;">🥰</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="❤️" style="cursor:pointer; font-size: 34px;">❤️</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🔥" style="cursor:pointer; font-size: 34px;">🔥</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😂" style="cursor:pointer; font-size: 34px;">😂</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😍" style="cursor:pointer; font-size: 34px;">😍</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🤩" style="cursor:pointer; font-size: 34px;">🤩</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😜" style="cursor:pointer; font-size: 34px;">😜</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🤪" style="cursor:pointer; font-size: 34px;">🤪</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😎" style="cursor:pointer; font-size: 34px;">😎</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="💀" style="cursor:pointer; font-size: 34px;">💀</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🎉" style="cursor:pointer; font-size: 34px;">🎉</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="💯" style="cursor:pointer; font-size: 34px;">💯</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="👍" style="cursor:pointer; font-size: 34px;">👍</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😮" style="cursor:pointer; font-size: 34px;">😮</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😢" style="cursor:pointer; font-size: 34px;">😢</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😡" style="cursor:pointer; font-size: 34px;">😡</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🙌" style="cursor:pointer; font-size: 34px;">🙌</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="✨" style="cursor:pointer; font-size: 34px;">✨</span>
+            <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="👀" style="cursor:pointer; font-size: 34px;">👀</span>
           </div>
-          <button class="picker-scroll-btn scroll-right text-purple-400 font-bold px-1 select-none active:scale-75 transition-transform" style="font-size: 16px; background: none; border: none; outline: none; cursor: pointer;">▶</button>
+          <button class="picker-scroll-btn scroll-right text-purple-400 font-bold px-2 select-none active:scale-75 transition-transform" style="font-size: 22px; background: none; border: none; outline: none; cursor: pointer;">▶</button>
         `;
 
         this.canvasEl.appendChild(picker);
@@ -2753,11 +2860,11 @@ const ScrapCanvas = {
         const track = picker.querySelector('.reaction-scroll-track');
         picker.querySelector('.scroll-left').addEventListener('click', (e) => {
           e.stopPropagation();
-          track.scrollBy({ left: -60, behavior: 'smooth' });
+          track.scrollBy({ left: -100, behavior: 'smooth' });
         });
         picker.querySelector('.scroll-right').addEventListener('click', (e) => {
           e.stopPropagation();
-          track.scrollBy({ left: 60, behavior: 'smooth' });
+          track.scrollBy({ left: 100, behavior: 'smooth' });
         });
 
         // Bind emoji click/touchstart handlers
@@ -2765,25 +2872,25 @@ const ScrapCanvas = {
           const handler = (e) => {
             e.stopPropagation();
             e.preventDefault();
-             const emoji = el.getAttribute('data-emoji');
-             this.spawnEmojiBurst(domEl, emoji);
-             this.spawnFullScreenSparks(emoji);
-             picker.remove();
+            const emoji = el.getAttribute('data-emoji');
+            this.spawnEmojiBurst(domEl, emoji);
+            this.spawnFullScreenSparks(emoji);
+            picker.remove();
 
-             // Sync spark alert dynamically over PocketBase
-             const sparkId = 'spark_' + Date.now();
-             ScrapFirebase.saveElement(ScrapFirebase.roomId, sparkId, {
-               type: 'spark',
-               emoji: emoji,
-               targetElementId: id,
-               userName: ScrapFirebase.userName || 'Squadmate',
-               timestamp: Date.now(),
-               date: this.currentDate
-             }).then(() => {
-               setTimeout(() => {
-                 ScrapFirebase.deleteElement(ScrapFirebase.roomId, sparkId);
-               }, 2000);
-             });
+            // Sync spark alert dynamically over PocketBase
+            const sparkId = 'spark_' + Date.now();
+            ScrapFirebase.saveElement(ScrapFirebase.roomId, sparkId, {
+              type: 'spark',
+              emoji: emoji,
+              targetElementId: id,
+              userName: ScrapFirebase.userName || 'Squadmate',
+              timestamp: Date.now(),
+              date: this.currentDate
+            }).then(() => {
+              setTimeout(() => {
+                ScrapFirebase.deleteElement(ScrapFirebase.roomId, sparkId);
+              }, 2000);
+            });
           };
           el.addEventListener('click', handler);
           el.addEventListener('touchstart', handler, { passive: false });
@@ -3403,7 +3510,7 @@ const ScrapCanvas = {
     picker.style.display = 'flex';
     picker.style.flexDirection = 'row';
     picker.style.alignItems = 'center';
-    picker.style.padding = '4px 6px';
+    picker.style.padding = '6px 12px';
     picker.style.backgroundColor = '#120921';
     picker.style.border = '1.5px solid rgba(168, 85, 247, 0.7)';
     picker.style.borderRadius = '9999px';
@@ -3432,11 +3539,21 @@ const ScrapCanvas = {
     }
 
     picker.innerHTML = `
-      <button class="picker-scroll-btn scroll-left text-purple-400 font-bold px-1 select-none active:scale-75 transition-transform" style="font-size: 16px; background: none; border: none; outline: none; cursor: pointer;">◀</button>
-      <div class="reaction-scroll-track flex flex-row items-center gap-[15px] overflow-x-auto" style="max-width: 170px; white-space: nowrap; -webkit-overflow-scrolling: touch; pointer-events: auto;">
+      <button class="picker-scroll-btn scroll-left text-purple-400 font-bold px-2 select-none active:scale-75 transition-transform" style="font-size: 20px; background: none; border: none; outline: none; cursor: pointer;">◀</button>
+      <div class="reaction-scroll-track flex flex-row items-center gap-[20px] overflow-x-auto" style="max-width: 250px; white-space: nowrap; -webkit-overflow-scrolling: touch; pointer-events: auto;">
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😊" style="cursor:pointer; font-size: 28px;">😊</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🙂" style="cursor:pointer; font-size: 28px;">🙂</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😀" style="cursor:pointer; font-size: 28px;">😀</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😁" style="cursor:pointer; font-size: 28px;">😁</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🥰" style="cursor:pointer; font-size: 28px;">🥰</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="❤️" style="cursor:pointer; font-size: 28px;">❤️</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🔥" style="cursor:pointer; font-size: 28px;">🔥</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😂" style="cursor:pointer; font-size: 28px;">😂</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😍" style="cursor:pointer; font-size: 28px;">😍</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🤩" style="cursor:pointer; font-size: 28px;">🤩</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😜" style="cursor:pointer; font-size: 28px;">😜</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🤪" style="cursor:pointer; font-size: 28px;">🤪</span>
+        <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="😎" style="cursor:pointer; font-size: 28px;">😎</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="💀" style="cursor:pointer; font-size: 28px;">💀</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="🎉" style="cursor:pointer; font-size: 28px;">🎉</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="💯" style="cursor:pointer; font-size: 28px;">💯</span>
@@ -3448,7 +3565,7 @@ const ScrapCanvas = {
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="✨" style="cursor:pointer; font-size: 28px;">✨</span>
         <span class="cursor-pointer text-xl hover:scale-125 active:scale-95 transition-transform duration-100" data-emoji="👀" style="cursor:pointer; font-size: 28px;">👀</span>
       </div>
-      <button class="picker-scroll-btn scroll-right text-purple-400 font-bold px-1 select-none active:scale-75 transition-transform" style="font-size: 16px; background: none; border: none; outline: none; cursor: pointer;">▶</button>
+      <button class="picker-scroll-btn scroll-right text-purple-400 font-bold px-2 select-none active:scale-75 transition-transform" style="font-size: 20px; background: none; border: none; outline: none; cursor: pointer;">▶</button>
     `;
 
     document.body.appendChild(picker);
@@ -3457,11 +3574,11 @@ const ScrapCanvas = {
     const track = picker.querySelector('.reaction-scroll-track');
     picker.querySelector('.scroll-left').addEventListener('click', (e) => {
       e.stopPropagation();
-      track.scrollBy({ left: -60, behavior: 'smooth' });
+      track.scrollBy({ left: -90, behavior: 'smooth' });
     });
     picker.querySelector('.scroll-right').addEventListener('click', (e) => {
       e.stopPropagation();
-      track.scrollBy({ left: 60, behavior: 'smooth' });
+      track.scrollBy({ left: 90, behavior: 'smooth' });
     });
 
     picker.querySelectorAll('span[data-emoji]').forEach(el => {

@@ -1442,6 +1442,11 @@ const ScrapApp = {
       this.showScreen('screen-dashboard');
       this.dismissSplash();
 
+      // Trigger tour guide onboarding on dashboard
+      if (window.ScrapTour && typeof ScrapTour.initDashboardOnboarding === 'function') {
+        ScrapTour.initDashboardOnboarding();
+      }
+
       // Load and render rooms asynchronously in the background (showing skeleton loader)
       console.log('[ScrapApp] Rendering dashboard rooms...');
       this.renderDashboardRooms();
@@ -2259,25 +2264,9 @@ const ScrapApp = {
               <span>👾 CYBERPUNK</span>
               ${currentTheme === 'cyberpunk' ? '<span style="color:#00f0ff; font-weight:bold;">●</span>' : ''}
             </button>
-            <button data-theme="vaporwave" class="theme-select-option" style="background:${currentTheme === 'vaporwave' ? 'rgba(255,0,171,0.15)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${currentTheme === 'vaporwave' ? '#ff00ab' : 'rgba(255,255,255,0.1)'}; color:#fff; font-family:monospace; padding:12px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; transition:all 0.2s;">
-              <span>🌅 SUNSET VAPORWAVE</span>
-              ${currentTheme === 'vaporwave' ? '<span style="color:#ff00ab; font-weight:bold;">●</span>' : ''}
-            </button>
-            <button data-theme="matrix" class="theme-select-option" style="background:${currentTheme === 'matrix' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${currentTheme === 'matrix' ? '#10b981' : 'rgba(255,255,255,0.1)'}; color:#fff; font-family:monospace; padding:12px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; transition:all 0.2s;">
-              <span>📟 MATRIX TERMINAL</span>
-              ${currentTheme === 'matrix' ? '<span style="color:#10b981; font-weight:bold;">●</span>' : ''}
-            </button>
             <button data-theme="classical" class="theme-select-option" style="background:${currentTheme === 'classical' ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${currentTheme === 'classical' ? '#f59e0b' : 'rgba(255,255,255,0.1)'}; color:#fff; font-family:monospace; padding:12px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; transition:all 0.2s;">
               <span>🏛️ CLASSICAL SLATE</span>
               ${currentTheme === 'classical' ? '<span style="color:#f59e0b; font-weight:bold;">●</span>' : ''}
-            </button>
-            <button data-theme="retro" class="theme-select-option" style="background:${currentTheme === 'retro' ? 'rgba(45,106,79,0.15)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${currentTheme === 'retro' ? '#2d6a4f' : 'rgba(255,255,255,0.1)'}; color:#fff; font-family:monospace; padding:12px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; transition:all 0.2s;">
-              <span>📜 RETRO PAPER</span>
-              ${currentTheme === 'retro' ? '<span style="color:#2d6a4f; font-weight:bold;">●</span>' : ''}
-            </button>
-            <button data-theme="light" class="theme-select-option" style="background:${currentTheme === 'light' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.03)'}; border:1px solid ${currentTheme === 'light' ? '#10b981' : 'rgba(255,255,255,0.1)'}; color:#fff; font-family:monospace; padding:12px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; transition:all 0.2s;">
-              <span>☀️ CLEAN LIGHT</span>
-              ${currentTheme === 'light' ? '<span style="color:#10b981; font-weight:bold;">●</span>' : ''}
             </button>
             
             <div style="display:flex; flex-direction:column; gap:6px;">
@@ -2463,6 +2452,10 @@ const ScrapApp = {
             <button id="set-btn-theme" style="background:rgba(176,38,255,0.1); border:1px solid rgba(176,38,255,0.25); color:#fff; font-family:monospace; padding:14px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; gap:12px; transition:all 0.2s; font-size:12px; font-weight:bold; letter-spacing:1px; width:100%;" class="hover:scale-[1.02] active:scale-95">
               <span>🎨</span> <span>SWITCH APP THEME</span>
             </button>
+
+            <button id="set-btn-tour" style="background:rgba(57,255,20,0.1); border:1px solid rgba(57,255,20,0.25); color:#39ff14; font-family:monospace; padding:14px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; gap:12px; transition:all 0.2s; font-size:12px; font-weight:bold; letter-spacing:1px; width:100%;" class="hover:scale-[1.02] active:scale-95">
+              <span>🚀</span> <span>REPLAY TOUR GUIDE</span>
+            </button>
             
             <button id="set-btn-logout" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); color:#ff9900; font-family:monospace; padding:14px; border-radius:16px; cursor:pointer; text-align:left; display:flex; align-items:center; gap:12px; transition:all 0.2s; font-size:12px; font-weight:bold; letter-spacing:1px; width:100%;" class="hover:scale-[1.02] active:scale-95">
               <span>🚪</span> <span>LOG OUT OF VAULT</span>
@@ -2486,6 +2479,13 @@ const ScrapApp = {
       modal.querySelector('#set-btn-theme').addEventListener('click', () => {
         modal.remove();
         triggerThemeSelector();
+      });
+
+      modal.querySelector('#set-btn-tour').addEventListener('click', () => {
+        modal.remove();
+        if (window.ScrapTour) {
+          window.ScrapTour.start('dashboard', true);
+        }
       });
 
       modal.querySelector('#set-btn-logout').addEventListener('click', async () => {
@@ -2772,24 +2772,41 @@ const ScrapApp = {
       btnScrapbook.addEventListener('click', () => {
         modalScrapbook.classList.remove('hidden');
 
-        // Initialize filters to the current board date month & year
-        const yearSelect = document.getElementById('scrapbook-filter-year');
-        const monthSelect = document.getElementById('scrapbook-filter-month');
         if (yearSelect && monthSelect) {
+          // Collect all unique years dynamically from elements and current room date
+          const yearsSet = new Set();
           const defaultDate = this.currentDate || new Date().toISOString().split('T')[0];
-          const parts = defaultDate.split('-');
+          const defaultYear = parseInt(defaultDate.split('-')[0], 10) || new Date().getFullYear();
+          yearsSet.add(defaultYear);
+          yearsSet.add(new Date().getFullYear());
 
-          // Dynamically populate year options from the current year back to 2024
-          const currentYear = new Date().getFullYear();
+          const elements = ScrapFirebase.elements || {};
+          Object.values(elements).forEach(el => {
+            if (el && el.date) {
+              const y = parseInt(el.date.split('-')[0], 10);
+              if (!isNaN(y)) yearsSet.add(y);
+            }
+          });
+
+          const sortedYears = Array.from(yearsSet).sort((a, b) => a - b);
+          let minYear = sortedYears[0];
+          let maxYear = sortedYears[sortedYears.length - 1];
+
+          // Ensure a broad default span while including any custom historical years (e.g. 1996)
+          if (minYear > 1990) minYear = 1990;
+          if (maxYear < new Date().getFullYear()) maxYear = new Date().getFullYear();
+
           yearSelect.innerHTML = '';
-          for (let y = currentYear; y >= 2024; y--) {
+          for (let y = maxYear; y >= minYear; y--) {
             const opt = document.createElement('option');
             opt.value = String(y);
             opt.innerText = String(y);
             yearSelect.appendChild(opt);
           }
 
-          if (parts[0]) yearSelect.value = parts[0];
+          const parts = defaultDate.split('-');
+          const activeYearStr = String(parts[0] || defaultYear);
+          yearSelect.value = activeYearStr;
           if (parts[1]) monthSelect.value = parts[1];
         }
 
@@ -6872,6 +6889,11 @@ const ScrapApp = {
 
     // Show canvas screen FIRST so workspace has real dimensions before renderElements fires
     this.showScreen('screen-canvas');
+
+    // Trigger tour guide onboarding on room canvas
+    if (window.ScrapTour && typeof ScrapTour.initCanvasOnboarding === 'function') {
+      ScrapTour.initCanvasOnboarding();
+    }
 
     let shouldRestoreViewport = savedLeftVal !== null && savedTopVal !== null;
 

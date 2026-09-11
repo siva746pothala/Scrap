@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Scrap</string>
-    <string name="title_activity_main">Scrap</string>
+    <string name="app_name">Mitrava</string>
+    <string name="title_activity_main">Mitrava</string>
     <string name="package_name">com.memories.scrap</string>
     <string name="custom_url_scheme">com.memories.scrap</string>
 </resources>
