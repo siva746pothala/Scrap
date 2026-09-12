@@ -1,5 +1,6 @@
 /* ==========================================================================
    Scrap App - Interactive Canvas Tour Guide Overlay CSS
+   Redesigned: Arrow-tooltip approach (no glow ON elements, backdrop cutout only)
    ========================================================================== */
 
 /* Main Tour Overlay Container */
@@ -20,58 +21,80 @@
   display: block;
 }
 
-/* Semi-transparent Backdrop with SVG Mask for Spotlight Cutout */
+/* Remove old full-screen backdrop — now the spotlight itself IS the backdrop via box-shadow */
 .tour-backdrop {
-  position: absolute;
-  inset: 0;
-  background-color: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-  pointer-events: none;
-  transition: clip-path 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  display: none;
 }
 
-#scrap-tour-overlay.tour-active .tour-backdrop {
-  pointer-events: auto;
-}
-
-/* Glowing Spotlight Ring around Active Target */
+/* Spotlight = transparent cutout. box-shadow creates the dark overlay around it.
+   The target element shows through clearly with NO glow applied to it. */
 #scrap-tour-spotlight {
-  position: absolute;
-  border-radius: 9999px;
-  box-shadow: 0 0 0 3px #39ff14, 0 0 20px #39ff14, 0 0 40px rgba(57, 255, 20, 0.5);
+  position: fixed;
+  border-radius: 14px;
+  background: transparent;
+  /* Large box-shadow acts as the dark backdrop with a clear hole at spotlight position */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.80);
+  /* Subtle dashed border — just outlines the element, does NOT obscure it */
+  border: 2px dashed rgba(57, 255, 20, 0.75);
   pointer-events: none;
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 99992;
-  animation: tourPulse 2s infinite ease-in-out;
+  animation: spotlightBlink 2.2s infinite ease-in-out;
 }
 
-@keyframes tourPulse {
-  0%, 100% {
-    box-shadow: 0 0 0 3px #39ff14, 0 0 20px #39ff14, 0 0 35px rgba(57, 255, 20, 0.4);
-  }
-  50% {
-    box-shadow: 0 0 0 4px #00f0ff, 0 0 25px #00f0ff, 0 0 50px rgba(0, 240, 255, 0.6);
-  }
+@keyframes spotlightBlink {
+  0%, 100% { border-color: rgba(57, 255, 20, 0.75); }
+  50%       { border-color: rgba(0, 240, 255, 0.85); }
+}
+
+/* SVG Arrow overlay — draws animated dashed line from card to target */
+#tour-arrow-svg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 99993;
+  overflow: visible;
+}
+
+#tour-arrow-line {
+  stroke: #39ff14;
+  stroke-width: 2.5;
+  stroke-dasharray: 8 5;
+  stroke-dashoffset: 0;
+  fill: none;
+  animation: dashFlow 1s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(57, 255, 20, 0.7));
+}
+
+#tour-arrow-head {
+  fill: #39ff14;
+  filter: drop-shadow(0 0 4px rgba(57, 255, 20, 0.7));
+}
+
+@keyframes dashFlow {
+  from { stroke-dashoffset: 26; }
+  to   { stroke-dashoffset: 0; }
 }
 
 /* Tooltip Dialog Card */
 #scrap-tour-card {
-  position: absolute;
+  position: fixed;
   width: calc(100vw - 32px);
-  max-width: 380px;
-  background: rgba(18, 10, 32, 0.95);
-  border: 1.5px solid rgba(57, 255, 20, 0.4);
+  max-width: 340px;
+  background: rgba(10, 4, 20, 0.97);
+  border: 1.5px solid rgba(57, 255, 20, 0.35);
   border-radius: 20px;
-  padding: 18px 20px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 30px rgba(57, 255, 20, 0.2);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  padding: 16px 18px 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.95), 0 0 24px rgba(57, 255, 20, 0.15);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   z-index: 99995;
   pointer-events: none;
   color: #ffffff;
   font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 #scrap-tour-overlay.tour-active #scrap-tour-card {
@@ -82,35 +105,63 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .tour-step-badge {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #39ff14;
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  background: rgba(57, 255, 20, 0.12);
+  background: rgba(57, 255, 20, 0.1);
   padding: 3px 10px;
   border-radius: 99px;
-  border: 1px solid rgba(57, 255, 20, 0.3);
+  border: 1px solid rgba(57, 255, 20, 0.25);
 }
 
 .tour-step-title {
   font-size: 15px;
   font-weight: 800;
   color: #ffffff;
-  margin-top: 4px;
+  margin-top: 2px;
   margin-bottom: 6px;
   line-height: 1.3;
 }
 
 .tour-step-description {
   font-size: 12px;
-  line-height: 1.5;
-  color: rgba(255, 255, 255, 0.85);
-  margin-bottom: 16px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 14px;
+}
+
+/* Arrow label — "↑ See this button" hint */
+.tour-arrow-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #39ff14;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 12px;
+  opacity: 0.85;
+}
+
+.tour-arrow-label-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #39ff14;
+  animation: dotPing 1s infinite;
+  flex-shrink: 0;
+}
+
+@keyframes dotPing {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(1.4); }
 }
 
 .tour-controls {
@@ -118,14 +169,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding-top: 12px;
 }
 
 .tour-btn {
   font-size: 11px;
   font-weight: 700;
-  padding: 7px 14px;
+  padding: 7px 16px;
   border-radius: 999px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -137,32 +188,32 @@
 }
 
 .tour-btn-prev {
-  background: rgba(255, 255, 255, 0.1);
-  color: #cccccc;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: #aaaaaa;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .tour-btn-prev:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.15);
   color: #ffffff;
 }
 
 .tour-btn-next {
   background: #39ff14;
   color: #000000;
-  font-weight: 800;
-  box-shadow: 0 0 15px rgba(57, 255, 20, 0.4);
+  font-weight: 900;
+  box-shadow: 0 0 14px rgba(57, 255, 20, 0.35);
 }
 
 .tour-btn-next:hover {
   background: #47ff26;
   transform: translateY(-1px);
-  box-shadow: 0 0 20px rgba(57, 255, 20, 0.6);
+  box-shadow: 0 0 20px rgba(57, 255, 20, 0.55);
 }
 
 .tour-btn-skip {
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.4);
   font-size: 10px;
 }
 

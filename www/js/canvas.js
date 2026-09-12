@@ -1754,12 +1754,14 @@ const ScrapCanvas = {
           if (e.touches && e.touches.length >= 2) return; // Allow pinch-zoom bubbling!
           if (e.touches && e.touches[0]) {
             handleMove(e.touches[0].clientX, e.touches[0].clientY);
-            e.stopPropagation();
+            // Do NOT stopPropagation — allows parent item touchstart to fire & set activeElement for dragging
           }
         }, { passive: false });
 
         card.addEventListener('touchmove', (e) => {
           if (e.touches && e.touches.length >= 2) return; // Allow pinch-zoom bubbling!
+          // If parent item is being dragged, skip 3D tilt & let event bubble to window drag handler
+          if (this.activeElement) return;
           if (e.touches && e.touches[0]) {
             handleMove(e.touches[0].clientX, e.touches[0].clientY);
             e.stopPropagation();
@@ -1769,12 +1771,12 @@ const ScrapCanvas = {
 
         card.addEventListener('touchend', (e) => {
           handleReset();
-          e.stopPropagation();
+          // Do NOT stopPropagation — allows window touchend handler to save final drag position
         });
-        
+
         card.addEventListener('touchcancel', (e) => {
           handleReset();
-          e.stopPropagation();
+          // Do NOT stopPropagation
         });
 
         card.addEventListener('click', async (e) => {

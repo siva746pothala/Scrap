@@ -1967,3 +1967,64 @@ input, textarea, [contenteditable] {
   user-select: text !important;
   -webkit-user-select: text !important;
 }
+
+/* Non-canvas screens — push content below native status bar / white overlay */
+/* Dashboard + Archive use p-5 (20px base padding) */
+#screen-dashboard,
+#screen-archive {
+  padding-top: calc(20px + env(safe-area-inset-top, 0px)) !important;
+}
+
+/* Gateway + Security use p-6 (24px base padding) */
+#screen-gateway,
+#screen-security {
+  padding-top: calc(24px + env(safe-area-inset-top, 0px)) !important;
+}
+
+/* Capture screen back button — cleared below status bar */
+.capture-back-btn-pos {
+  top: calc(16px + env(safe-area-inset-top, 0px)) !important;
+}
+
+/* Doodle panel — cleared below HUD row height + status bar */
+.doodle-panel-pos {
+  top: calc(80px + env(safe-area-inset-top, 0px)) !important;
+}
+
+/* System notification toast — cleared below status bar */
+.top-safe-inset {
+  top: calc(24px + env(safe-area-inset-top, 0px)) !important;
+}
+
+/* Canvas HUD — safe-area fallback for Android 15+ edge-to-edge devices */
+/* On older Android: env(safe-area-inset-top) = 0, so top = 16px (matches original design) */
+/* On Android 15+ enforced edge-to-edge: env(safe-area-inset-top) = status bar height */
+.canvas-hud-top-left {
+  position: absolute !important;
+  top: calc(16px + env(safe-area-inset-top, 0px)) !important;
+  left: 16px !important;
+}
+
+.canvas-hud-top-right {
+  position: absolute !important;
+  top: calc(16px + env(safe-area-inset-top, 0px)) !important;
+  right: 16px !important;
+}
+
+#members-sidebar {
+  top: calc(80px + env(safe-area-inset-top, 0px)) !important;
+}
+
+/* Bottom safe-area — clears Android navigation bar */
+/* env(safe-area-inset-bottom) = 0 on older Android, = nav bar height on Android 15+ */
+.canvas-hud-bottom {
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+.dashboard-fab-bottom {
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+.bottom-safe {
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+}

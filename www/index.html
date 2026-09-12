@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self' data: blob: gap: https://api.myscrapmemories.com https://4d6b71a94148fa81bf2f974ffa012d16.r2.cloudflarestorage.com 'unsafe-eval' 'unsafe-inline'; 
                  connect-src 'self' blob: data: https://api.myscrapmemories.com https://4d6b71a94148fa81bf2f974ffa012d16.r2.cloudflarestorage.com;
@@ -15,15 +15,18 @@
 
   <!-- Offline Libraries -->
   <link rel="stylesheet" href="lib/tailwind.min.css">
-  <link rel="stylesheet" href="css/app.css?v=2.0">
-  <link rel="stylesheet" href="css/ads.css?v=2.0">
-  <link rel="stylesheet" href="css/tour.css?v=2.0">
+  <link rel="stylesheet" href="css/app.css?v=2.1">
+  <link rel="stylesheet" href="css/ads.css?v=2.1">
+  <link rel="stylesheet" href="css/tour.css?v=2.1">
 
   <!-- Capacitor Runtime -->
   <script src="capacitor.js"></script>
 
   <!-- Native Storage Helper -->
   <script src="js/storage.js"></script>
+
+  <!-- Auto Updater -->
+  <script src="js/updater.js"></script>
 
   <!-- PocketBase SDK -->
   <script src="lib/pocketbase.umd.js"></script>
@@ -61,15 +64,20 @@
   <script src="js/pocketbase.js" defer></script>
   <script src="js/safety.js" defer></script>
   <script src="js/recovery.js" defer></script>
-  <script src="js/canvas.js?v=2.0" defer></script>
+  <script src="js/canvas.js?v=2.1" defer></script>
   <script src="js/dialog.js" defer></script>
   <script src="js/notifications.js" defer></script>
-  <script src="js/tour.js?v=2.0" defer></script>
-  <script src="js/app.js?v=2.0" defer></script>
-  <script src="js/ads.js?v=2.0" defer></script>
+  <script src="js/tour.js?v=2.1" defer></script>
+  <script src="js/app.js?v=2.1" defer></script>
+  <script src="js/ads.js?v=2.1" defer></script>
 </head>
 
 <body class="bg-cyber-dark scanlines text-white font-sans antialiased overflow-hidden select-none">
+
+  <!-- White status bar overlay for Android 15+ edge-to-edge (0 height on older Android) -->
+  <div id="status-bar-white"
+    style="position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top,0px);background:#ffffff;z-index:999999;pointer-events:none;">
+  </div>
 
   <!-- Screen Edge Glow Overlay -->
   <div id="screen-edge-glow" class="fixed inset-0 pointer-events-none z-[999999] hidden"></div>
@@ -286,7 +294,7 @@
     </div>
 
     <!-- Floating Action Button (FAB) -->
-    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center z-50">
+    <div class="dashboard-fab-bottom fixed left-1/2 -translate-x-1/2 flex items-center z-50">
       <button id="btn-fab-actions"
         class="btn-fab-camera w-14 h-14 rounded-full flex items-center justify-center text-black border border-white">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -314,7 +322,7 @@
     </div>
 
     <!-- Top HUD Bar Left -->
-    <div class="absolute top-4 left-4 z-40 flex flex-col gap-2 max-w-[calc(100vw-64px)] pr-12 pointer-events-auto">
+    <div class="canvas-hud-top-left z-40 flex flex-col gap-2 max-w-[calc(100vw-64px)] pr-12 pointer-events-auto">
       <!-- Row 1: Navigation & Room Info -->
       <div class="flex flex-wrap items-center gap-1.5">
         <button id="btn-canvas-back"
@@ -357,7 +365,7 @@
     </div>
 
     <!-- Top HUD Bar Right (Option toggles) -->
-    <div class="absolute top-4 right-4 z-40 flex flex-col items-end gap-2 pointer-events-auto">
+    <div class="canvas-hud-top-right z-40 flex flex-col items-end gap-2 pointer-events-auto">
       <button id="btn-hud-toggle-menu"
         class="w-8 h-8 rounded-full bg-white border border-white/10 flex items-center justify-center text-black text-xs hover:border-[#39ff14] transition-colors flex-shrink-0"
         title="Toggle Options Menu">
@@ -449,7 +457,7 @@
     </div>
 
     <!-- Bottom Input Toolbar (Capsule Style) -->
-    <div id="canvas-bottom-bar" class="absolute bottom-6 left-4 right-4 z-40 flex justify-center pointer-events-none">
+    <div id="canvas-bottom-bar" class="canvas-hud-bottom absolute left-4 right-4 z-40 flex justify-center pointer-events-none">
       <div
         class="bottom-input-bar px-4 py-2 flex items-center justify-start sm:justify-center gap-2.5 sm:gap-5 shadow-2xl pointer-events-auto">
         <!-- Green Camera snaper -->
@@ -515,7 +523,7 @@
     <div id="doodle-draw-canvas" class="hidden absolute inset-0 z-30 bg-black/30 cursor-crosshair">
       <canvas id="doodle-painter-canvas" class="w-full h-full" style="touch-action: none;"></canvas>
       <div id="doodle-control-panel"
-        class="absolute top-20 right-4 bg-black/90 border border-white/10 p-3 rounded-xl flex flex-col gap-2 cursor-move select-none"
+        class="doodle-panel-pos absolute right-4 bg-black/90 border border-white/10 p-3 rounded-xl flex flex-col gap-2 cursor-move select-none"
         style="z-index: 100;">
         <span class="text-[10px] font-space text-gray-400 uppercase tracking-widest">Brush / Eraser</span>
         <div class="flex gap-1.5 items-center">
@@ -919,7 +927,7 @@
        SCREEN 5: CAPTURE INTENT
        ============================================== -->
   <div id="screen-capture" class="screen hidden fixed inset-0 flex flex-col bg-black z-40">
-    <div class="absolute top-4 left-4 z-50">
+    <div class="capture-back-btn-pos absolute left-4 z-50">
       <button id="btn-capture-back"
         class="w-8 h-8 rounded-full bg-black/80 border border-white/10 flex items-center justify-center text-white text-xs hover:border-[#39ff14]">
         ◀
@@ -1205,13 +1213,13 @@
   </div>
 
   <div id="system-notification"
-    class="hidden fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#ff00ab] text-white font-space text-xs px-4 py-2.5 rounded-full border border-white shadow-2xl flex items-center gap-2 animate-bounce">
+    class="hidden fixed top-safe-inset left-1/2 -translate-x-1/2 z-[100] bg-[#ff00ab] text-white font-space text-xs px-4 py-2.5 rounded-full border border-white shadow-2xl flex items-center gap-2 animate-bounce">
     <span>🚨</span> <span id="notification-text">Alert Detail</span>
   </div>
 
   <!-- Connection Selection Mode Helper Indicator -->
   <div id="connection-mode-helper"
-    class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-black/95 text-white font-space text-xs px-5 py-3.5 rounded-full border border-[#ff00ab] shadow-2xl flex items-center gap-3">
+    class="hidden fixed bottom-safe left-1/2 -translate-x-1/2 z-[100] bg-black/95 text-white font-space text-xs px-5 py-3.5 rounded-full border border-[#ff00ab] shadow-2xl flex items-center gap-3">
     <div class="w-2.5 h-2.5 bg-[#ff00ab] rounded-full animate-ping"></div>
     <span class="text-[#ff00ab] uppercase tracking-wider text-[10px] font-bold font-mono text-center">Tap two items
       to link</span>
@@ -1458,7 +1466,7 @@
 
   <!-- Connection Custom Curve Design Mode Overlay -->
   <div id="connection-design-helper"
-    class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-black/95 text-white font-space text-xs px-5 py-3.5 rounded-full border border-[#ff9900] shadow-2xl flex items-center gap-3">
+    class="hidden fixed bottom-safe left-1/2 -translate-x-1/2 z-[100] bg-black/95 text-white font-space text-xs px-5 py-3.5 rounded-full border border-[#ff9900] shadow-2xl flex items-center gap-3">
     <div class="w-2.5 h-2.5 bg-[#ff9900] rounded-full animate-ping"></div>
     <span class="text-[#ff9900] uppercase tracking-wider text-[10px] font-bold font-mono text-center">DRAG HANDLES TO
       SHAPE WIRE</span>

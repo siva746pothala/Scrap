@@ -266,11 +266,23 @@ window.ScrapTour = (function () {
     tourOverlayEl.id = 'scrap-tour-overlay';
     tourOverlayEl.innerHTML = `
       <div class="tour-backdrop" id="tour-backdrop-area"></div>
+      <svg id="tour-arrow-svg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow-head" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#39ff14" id="tour-arrow-head"/>
+          </marker>
+        </defs>
+        <path id="tour-arrow-line" d="M0,0 Q0,0 0,0" marker-end="url(#arrow-head)"/>
+      </svg>
       <div id="scrap-tour-spotlight"></div>
       <div id="scrap-tour-card">
         <div class="tour-card-header">
           <span class="tour-step-badge" id="tour-badge">STEP 1/6</span>
           <button class="tour-btn tour-btn-skip" id="tour-btn-skip">SKIP TOUR ✕</button>
+        </div>
+        <div class="tour-arrow-label" id="tour-arrow-label">
+          <span class="tour-arrow-label-dot"></span>
+          <span id="tour-arrow-label-text">TARGET MENU</span>
         </div>
         <div class="tour-step-title" id="tour-title">Welcome</div>
         <div class="tour-step-description" id="tour-desc">Description</div>
@@ -341,6 +353,8 @@ window.ScrapTour = (function () {
         spotlightEl.style.width = '0px';
         spotlightEl.style.height = '0px';
         spotlightEl.style.opacity = '0';
+        const arrowLine = document.getElementById('tour-arrow-line');
+        if (arrowLine) arrowLine.setAttribute('d', 'M0,0 Q0,0 0,0');
         
         cardEl.style.top = '50%';
         cardEl.style.left = '50%';
@@ -372,19 +386,74 @@ window.ScrapTour = (function () {
       let cardTop = (viewportHeight - cardRect.height) / 2;
 
       if (step.position === 'bottom-left' || step.position === 'bottom-right') {
-        cardTop = Math.min(spotTop + spotHeight + 16, viewportHeight - cardRect.height - 20);
+        cardTop = Math.min(spotTop + spotHeight + 24, viewportHeight - cardRect.height - 20);
         if (step.position === 'bottom-left') {
           cardLeft = Math.max(16, spotLeft);
         } else {
           cardLeft = Math.min(viewportWidth - cardRect.width - 16, spotLeft + spotWidth - cardRect.width);
         }
       } else if (step.position === 'top-center') {
-        cardTop = Math.max(16, spotTop - cardRect.height - 20);
+        cardTop = Math.max(16, spotTop - cardRect.height - 24);
         cardLeft = (viewportWidth - cardRect.width) / 2;
       }
 
-      cardEl.style.left = `${Math.max(12, Math.min(cardLeft, viewportWidth - cardRect.width - 12))}px`;
-      cardEl.style.top = `${Math.max(12, Math.min(cardTop, viewportHeight - cardRect.height - 12))}px`;
+      const finalCardLeft = Math.max(12, Math.min(cardLeft, viewportWidth - cardRect.width - 12));
+      const finalCardTop = Math.max(12, Math.min(cardTop, viewportHeight - cardRect.height - 12));
+      cardEl.style.left = `${finalCardLeft}px`;
+      cardEl.style.top = `${finalCardTop}px`;
+
+      // Calculate SVG Arrow curve from Card edge to Target Center
+      const arrowLine = document.getElementById('tour-arrow-line');
+      const arrowLabel = document.getElementById('tour-arrow-label');
+      const arrowLabelText = document.getElementById('tour-arrow-label-text');
+
+      if (arrowLine && arrowLabel) {
+        arrowLabelText.textContent = `POINTING TO: ${step.title.toUpperCase()}`;
+        
+        // Target center
+        const targetCenterX = rect.left + rect.width / 2;
+        const targetCenterY = rect.top + rect.height / 2;
+
+        // Card edge point depending on relative position
+        const updatedCardRect = {
+          left: finalCardLeft,
+          top: finalCardTop,
+          width: cardRect.width,
+          height: cardRect.height
+        };
+
+        let startX = updatedCardRect.left + updatedCardRect.width / 2;
+        let startY = updatedCardRect.top;
+
+        if (targetCenterY > updatedCardRect.top + updatedCardRect.height) {
+          // Target is below card
+          startY = updatedCardRect.top + updatedCardRect.height;
+        } else if (targetCenterY < updatedCardRect.top) {
+          // Target is above card
+          startY = updatedCardRect.top;
+        }
+
+        // Calculate outer circle edge target point so arrow head stops AT the outer spotlight boundary, not inside the element/image
+        let endX = targetCenterX;
+        let endY = targetCenterY;
+
+        if (targetCenterY > startY) {
+          // Pointing down to target -> stop at top outer edge of spotlight circle
+          endY = spotTop - 2;
+        } else if (targetCenterY < startY) {
+          // Pointing up to target -> stop at bottom outer edge of spotlight circle
+          endY = spotTop + spotHeight + 2;
+        } else {
+          // Side positioning
+          endX = startX > targetCenterX ? spotLeft + spotWidth + 2 : spotLeft - 2;
+        }
+
+        // Control point for smooth curve
+        const controlX = (startX + endX) / 2 + (endX > startX ? 20 : -20);
+        const controlY = (startY + endY) / 2;
+
+        arrowLine.setAttribute('d', `M ${startX},${startY} Q ${controlX},${controlY} ${endX},${endY}`);
+      }
     }, 50);
   }
 

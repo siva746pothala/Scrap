@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.graphics.Color;
 import com.getcapacitor.BridgeActivity;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import io.capawesome.capacitorjs.plugins.mlkit.barcodescanning.BarcodeScannerPlugin;
 import app.capgo.audiorecorder.CapacitorAudioRecorderPlugin;
 
@@ -17,10 +18,19 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StickerPlugin.class);
         registerPlugin(CapacitorAudioRecorderPlugin.class);
         registerPlugin(DeviceLockPlugin.class);
+        registerPlugin(AppUpdatePlugin.class);
         super.onCreate(savedInstanceState);
 
-        // Standard Android 15 / Jetpack Edge-to-Edge API
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        // Override BridgeActivity's edge-to-edge to keep status bar visible
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+
+        // Force white status bar at runtime (XML statusBarColor is ignored on Android 15+)
+        getWindow().setStatusBarColor(Color.WHITE);
+        WindowInsetsControllerCompat insetsController =
+            WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (insetsController != null) {
+            insetsController.setAppearanceLightStatusBars(true); // dark icons on white bar
+        }
 
         if (this.bridge != null && this.bridge.getWebView() != null) {
             this.bridge.getWebView().setHorizontalScrollBarEnabled(false);
