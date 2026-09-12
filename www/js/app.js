@@ -1239,7 +1239,7 @@ const ScrapApp = {
         if (idInput && !idInput.classList.contains('hidden') && !idInput.disabled) {
           idInput.focus();
           if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
-            window.Capacitor.Plugins.Keyboard.show().catch(() => {});
+            window.Capacitor.Plugins.Keyboard.show().catch(() => { });
           }
         }
       }, 300);
@@ -1376,7 +1376,7 @@ const ScrapApp = {
           if (idInput && !idInput.classList.contains('hidden') && !idInput.disabled) {
             idInput.focus();
             if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
-              window.Capacitor.Plugins.Keyboard.show().catch(() => {});
+              window.Capacitor.Plugins.Keyboard.show().catch(() => { });
             }
           }
         }, 200);
@@ -1684,7 +1684,7 @@ const ScrapApp = {
         if (e && e.stopPropagation) e.stopPropagation();
         identityInput.focus();
         if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) {
-          window.Capacitor.Plugins.Keyboard.show().catch(() => {});
+          window.Capacitor.Plugins.Keyboard.show().catch(() => { });
         }
       };
       identityInput.addEventListener('click', focusIdentity);
@@ -2041,7 +2041,7 @@ const ScrapApp = {
 
         // Clear dashboard user profile UI to prevent stale initials/username leaks
         const welcomeEl = document.getElementById('dashboard-welcome');
-        if (welcomeEl) welcomeEl.innerText = 'SCRAP VAULT';
+        if (welcomeEl) welcomeEl.innerText = 'MITRAVA VAULT';
         const avatarImg = document.getElementById('dashboard-avatar');
         const avatarPlaceholder = document.getElementById('dashboard-avatar-placeholder');
         if (avatarImg) {
@@ -2167,7 +2167,7 @@ const ScrapApp = {
 
           // Clear dashboard user profile UI
           const welcomeEl = document.getElementById('dashboard-welcome');
-          if (welcomeEl) welcomeEl.innerText = 'SCRAP VAULT';
+          if (welcomeEl) welcomeEl.innerText = 'MITRAVA VAULT';
           const avatarImg = document.getElementById('dashboard-avatar');
           const avatarPlaceholder = document.getElementById('dashboard-avatar-placeholder');
           if (avatarImg) {
@@ -6066,7 +6066,7 @@ const ScrapApp = {
         </div>
         
         ${isOwner ? `
-          <p class="text-[9px] font-space text-[#39ff14]/90 uppercase tracking-widest text-center animate-pulse">// TAP AVATAR CIRCLE TO CHANGE</p>
+          <p class="text-[9px] font-space text-[#39ff14]/90 uppercase tracking-widest text-center animate-pulse">TAP AVATAR CIRCLE TO CHANGE</p>
         ` : `
           <p class="text-[9px] font-space text-white/80 uppercase tracking-widest text-center">${title.toUpperCase()}</p>
         `}
@@ -6162,7 +6162,7 @@ const ScrapApp = {
       }
         </div>
         
-        <p class="text-[9px] font-space text-[#39ff14]/90 uppercase tracking-widest text-center animate-pulse">// TAP AVATAR CIRCLE TO CHANGE</p>
+        <p class="text-[9px] font-space text-[#39ff14]/90 uppercase tracking-widest text-center animate-pulse">TAP AVATAR CIRCLE TO CHANGE</p>
         <p class="text-[7.5px] theme-text-muted uppercase tracking-widest font-mono">Tap outside to close</p>
       </div>
     `;
@@ -6930,7 +6930,7 @@ const ScrapApp = {
     if (this.activeMembersPruneInterval) {
       clearInterval(this.activeMembersPruneInterval);
     }
-    
+
     // Report presence immediately on room entry
     requestAnimationFrame(() => {
       if (window.ScrapCanvas) {

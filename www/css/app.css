@@ -70,10 +70,6 @@ body.theme-vaporwave {
   --card-shadow-color-blue: rgba(0, 240, 255, 0.2);
   --card-shadow-color-purple: rgba(176, 38, 255, 0.2);
   --card-shadow-color-pink: rgba(255, 0, 171, 0.2);
-  background-image: url('../assets/vaporwave_bg.webp') !important;
-  background-size: cover !important;
-  background-position: center !important;
-  background-repeat: no-repeat !important;
 }
 body.theme-vaporwave .cyber-grid-bg {
   background-color: transparent !important;
@@ -105,10 +101,6 @@ body.theme-matrix {
   --card-shadow-color-blue: rgba(16, 185, 129, 0.25);
   --card-shadow-color-purple: rgba(16, 185, 129, 0.25);
   --card-shadow-color-pink: rgba(16, 185, 129, 0.25);
-  background-image: url('../assets/matrix_bg.webp') !important;
-  background-size: cover !important;
-  background-position: center !important;
-  background-repeat: no-repeat !important;
 }
 body.theme-matrix .cyber-grid-bg {
   background-color: transparent !important;

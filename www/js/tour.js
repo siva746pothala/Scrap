@@ -17,7 +17,7 @@ window.ScrapTour = (function () {
     {
       id: 'step-dashboard-welcome',
       target: '#dashboard-welcome',
-      title: '🏠 Welcome to Scrap Vault!',
+      title: '🏠 Welcome to Mitrava Vault!',
       description: 'Your central hub! Here you can view your active canvas rooms, squad spaces, and account settings.',
       position: 'bottom-left',
       requiresMenu: false
@@ -69,7 +69,7 @@ window.ScrapTour = (function () {
     {
       id: 'step-welcome',
       target: '#canvas-workspace',
-      title: '🎨 Welcome to Scrap Canvas!',
+      title: '🎨 Welcome to Mitrava Canvas!',
       description: 'Your interactive multiplayer space. Let’s quickly tour every menu button so you can master your board!',
       position: 'center',
       requiresMenu: false

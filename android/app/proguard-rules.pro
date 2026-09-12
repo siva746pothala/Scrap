@@ -1,8 +1,14 @@
-# ---- Capacitor Core ----
+# ---- Capacitor Core & Plugins ----
 -keep class com.getcapacitor.** { *; }
--keep class com.getcapacitor.plugin.** { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin { *; }
+-keep @interface com.getcapacitor.** { *; }
+-keep @interface com.getcapacitor.annotation.** { *; }
+
 -keepclassmembers class * extends com.getcapacitor.Plugin {
     @com.getcapacitor.annotation.CapacitorPlugin <methods>;
+    @com.getcapacitor.annotation.Permission <methods>;
+    @com.getcapacitor.annotation.PermissionCallback <methods>;
     @com.getcapacitor.PluginMethod <methods>;
 }
 
@@ -12,27 +18,16 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
-# ---- Keep all Annotations ----
+# ---- Keep essential attributes ----
 -keepattributes *Annotation*
 -keepattributes SourceFile,LineNumberTable
 -keepattributes Signature
 -keepattributes Exceptions
 
-# ---- Firebase / Google Services ----
--keep class com.google.firebase.** { *; }
--keep class com.google.android.gms.** { *; }
+# ---- Firebase / Google Services / MLKit ----
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.**
-
-# ---- AdMob ----
--keep class com.google.android.gms.ads.** { *; }
-
-# ---- MLKit ----
--keep class com.google.mlkit.** { *; }
 -dontwarn com.google.mlkit.**
-
-# ---- App Classes ----
--keep class com.memories.scrap.** { *; }
 
 # ---- Prevent stripping enums ----
 -keepclassmembers enum * {
@@ -59,3 +54,4 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
