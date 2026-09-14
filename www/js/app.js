@@ -35,12 +35,25 @@ const ScrapApp = {
       }, 700);
     }
   },
+  getSavedTheme() {
+    const localTheme = localStorage.getItem('scrap_theme');
+    if (localTheme) return localTheme;
+
+    // Auto-restore 'custom' theme if user has custom_bg on PocketBase server after app reinstall
+    const user = window.pb && pb.authStore.isValid && pb.authStore.model;
+    if (user && user.custom_bg) {
+      localStorage.setItem('scrap_theme', 'custom');
+      return 'custom';
+    }
+    return 'cyberpunk';
+  },
   applyTheme(theme) {
+    const activeTheme = theme || this.getSavedTheme();
     document.body.classList.remove('theme-cyberpunk', 'theme-classical', 'theme-vaporwave', 'theme-matrix', 'theme-retro', 'theme-light', 'theme-custom');
-    document.body.classList.add(`theme-${theme}`);
+    document.body.classList.add(`theme-${activeTheme}`);
 
     let styleEl = document.getElementById('custom-theme-style');
-    if (theme === 'custom') {
+    if (activeTheme === 'custom') {
       const user = window.pb && pb.authStore.isValid && pb.authStore.model;
       const customBg = user && user.custom_bg
         ? `https://api.myscrapmemories.com/api/files/users/${user.id}/${user.custom_bg}`
@@ -562,7 +575,7 @@ const ScrapApp = {
     }
 
     // Initialize Theme
-    const activeTheme = localStorage.getItem('scrap_theme') || 'cyberpunk';
+    const activeTheme = this.getSavedTheme();
     this.applyTheme(activeTheme);
     this.applyEdgeGlow();
     this.applyRoboTheme();
@@ -1390,6 +1403,31 @@ const ScrapApp = {
           ScrapAds.hideAdMobBanner();
         }
       }
+
+      // Remove canvas info banners & stop active members timer when navigating away from canvas
+      if (screenId !== 'screen-canvas') {
+        if (this.activeMembersPruneInterval) {
+          clearInterval(this.activeMembersPruneInterval);
+          this.activeMembersPruneInterval = null;
+        }
+        const emptyBanner = document.getElementById('canvas-empty-date-info-banner');
+        if (emptyBanner) emptyBanner.remove();
+
+        const photoTip = document.getElementById('canvas-photo-longpress-tip');
+        if (photoTip) photoTip.remove();
+      }
+
+      // Trigger Robot Helper Tip when entering screen-dashboard
+      if (screenId === 'screen-dashboard') {
+        const helperBtn = document.getElementById('btn-dashboard-helper');
+        setTimeout(() => this.checkRobotHelperTip(helperBtn), 800);
+      }
+
+      // Remove dashboard info banners when navigating away from dashboard
+      if (screenId !== 'screen-dashboard') {
+        const robotTip = document.getElementById('dashboard-robot-helper-tip');
+        if (robotTip) robotTip.remove();
+      }
     }
   },
 
@@ -1434,7 +1472,7 @@ const ScrapApp = {
       }
 
       console.log('[ScrapApp] Transitioning to screen-dashboard...');
-      this.applyTheme(localStorage.getItem('scrap_theme') || 'cyberpunk');
+      this.applyTheme(this.getSavedTheme());
       this.applyEdgeGlow();
       this.applyRoboTheme();
 
@@ -1624,6 +1662,12 @@ const ScrapApp = {
         }
 
         helperBtn.classList.remove('animate-bounce-glow-blink');
+        const robotTip = document.getElementById('dashboard-robot-helper-tip');
+        if (robotTip) {
+          localStorage.setItem('scrap_robot_tip_dismissed', 'true');
+          robotTip.remove();
+        }
+
         const container = document.getElementById('rooms-container');
         if (container) {
           const isRevealed = container.classList.contains('scale-100');
@@ -1644,6 +1688,8 @@ const ScrapApp = {
           } else {
             container.classList.remove('scale-0', 'opacity-0');
             container.classList.add('scale-100', 'opacity-100');
+            // If now uncollapsed/revealed, clean up active tooltip card
+            if (window.ScrapTour) window.ScrapTour.cleanup();
           }
         }
       });
@@ -2253,7 +2299,7 @@ const ScrapApp = {
       const modal = document.createElement('div');
       modal.style.cssText = 'position: fixed; inset: 0; z-index: 999999 !important; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); padding: 16px;';
 
-      const currentTheme = localStorage.getItem('scrap_theme') || 'cyberpunk';
+      const currentTheme = this.getSavedTheme();
 
       modal.innerHTML = `
         <div style="background:#120921; border:1px solid rgba(176,38,255,0.35); border-radius:28px; padding:24px; width:100%; max-width:320px; max-height:85vh; overflow-y:auto; box-shadow:0 20px 50px rgba(0,0,0,0.9);" class="animate-in fade-in zoom-in-95 duration-200">
@@ -4405,7 +4451,7 @@ const ScrapApp = {
         segmentedStickerImg = outImg;
         drawStickerCanvas();
       };
-      outImg.src = canvas.toDataURL('image/png');
+      outImg.src = canvas.toDataURL('image/webp', 0.92);
     }
 
     const inputStickerFile = document.getElementById('input-sticker-file');
@@ -4479,7 +4525,7 @@ const ScrapApp = {
 
     document.getElementById('btn-save-custom-sticker').addEventListener('click', async () => {
       const creatorCanvas = document.getElementById('sticker-creator-canvas');
-      const stickerDataUrl = creatorCanvas.toDataURL('image/png');
+      const stickerDataUrl = creatorCanvas.toDataURL('image/webp', 0.92);
 
       let w = creatorCanvas.width;
       let h = creatorCanvas.height;
@@ -4974,6 +5020,12 @@ const ScrapApp = {
     const btnHudToggle = document.getElementById('btn-hud-toggle-menu');
     const hudMenu = document.getElementById('hud-collapsible-menu');
     if (btnHudToggle && hudMenu) {
+      const closeHudMenu = () => {
+        hudMenu.classList.add('hidden');
+        btnHudToggle.innerText = '⚙️';
+        btnHudToggle.classList.remove('border-cyber-green', 'text-cyber-green');
+      };
+
       btnHudToggle.addEventListener('click', () => {
         const isHidden = hudMenu.classList.toggle('hidden');
         if (isHidden) {
@@ -4983,6 +5035,13 @@ const ScrapApp = {
           btnHudToggle.innerText = '✕';
           btnHudToggle.classList.add('border-cyber-green', 'text-cyber-green');
         }
+      });
+
+      // Auto-close menu whenever any option item inside the gear menu is clicked
+      hudMenu.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          closeHudMenu();
+        });
       });
     }
 
@@ -5286,13 +5345,16 @@ const ScrapApp = {
           progressText.innerText = 'Uploading Photo...';
         }
 
-        // Helper function to compress canvas to blob <= 200KB
+        // Helper function to compress canvas to blob <= 200KB safely without freezing UI
         const compressToBlob = async (initialCanvas) => {
           let quality = 0.8;
           let currentCanvas = initialCanvas;
           const targetSize = 200 * 1024; // 200KB
+          let attempts = 0;
+          const maxAttempts = 12;
 
-          while (true) {
+          while (attempts < maxAttempts) {
+            attempts++;
             const blob = await new Promise((resolve) => {
               currentCanvas.toBlob(resolve, 'image/jpeg', quality);
             });
@@ -5301,9 +5363,12 @@ const ScrapApp = {
               throw new Error('Failed to generate image blob');
             }
 
-            if (blob.size <= targetSize || (quality <= 0.1 && currentCanvas.width <= 100)) {
+            if (blob.size <= targetSize || (quality <= 0.1 && currentCanvas.width <= 100) || attempts >= maxAttempts) {
               return blob;
             }
+
+            // Yield control briefly to keep UI responsive during heavy canvas operations
+            await new Promise((r) => setTimeout(r, 0));
 
             if (quality > 0.3) {
               quality -= 0.15;
@@ -5318,6 +5383,7 @@ const ScrapApp = {
               quality = 0.8; // reset quality for resized canvas
             }
           }
+          return null;
         };
 
         const blob = await compressToBlob(canvas);
@@ -5391,6 +5457,9 @@ const ScrapApp = {
 
           window.pendingScrollToElementId = elementId;
           await ScrapFirebase.saveElement(this.currentRoomId, elementId, metadata);
+          if (window.ScrapCanvas && typeof ScrapCanvas.checkFirstPhotoTip === 'function') {
+            setTimeout(() => ScrapCanvas.checkFirstPhotoTip(ScrapCanvas.elements), 150);
+          }
 
         } catch (err) {
 
@@ -5921,7 +5990,7 @@ const ScrapApp = {
       // Clear container right before appending (prevents parallel call appending duplicates)
       container.innerHTML = '';
 
-      const theme = localStorage.getItem('scrap_theme') || 'cyberpunk';
+      const theme = this.getSavedTheme();
       const cardStyles = [
         'dashboard-card-green',
         'dashboard-card-blue',
@@ -7069,6 +7138,87 @@ const ScrapApp = {
 
       container.appendChild(el);
     });
+  },
+
+  /**
+   * Shows a tour-guide tip for the robot helper button ("🤖 Can't See Your Rooms List?")
+   * Shows whenever the room list is collapsed on the dashboard during the 3-day onboarding period.
+   * Skipped if Google Play In-App update modal is active.
+   */
+  checkRobotHelperTip(targetElement, force = false) {
+    if (window.isUpdateModalActive) return;
+
+    // Skip showing robot helper tip if main tour guide or update modal is active
+    if ((window.ScrapTour && typeof ScrapTour.isActive === 'function' && ScrapTour.isActive()) || window.isUpdateModalActive || document.getElementById('mitrava-update-modal')) {
+      return;
+    }
+
+    // Ensure tooltip ONLY shows on the dashboard screen (never on Vault Secured gateway screen or Canvas)
+    const dashboardScreen = document.getElementById('screen-dashboard');
+    if (!dashboardScreen || dashboardScreen.classList.contains('hidden') || this.activeScreen !== 'screen-dashboard') {
+      return;
+    }
+
+    // ONLY show tooltip if rooms-container is currently collapsed/hidden (i.e. NOT showing rooms)
+    const roomsContainer = document.getElementById('rooms-container');
+    if (roomsContainer && roomsContainer.classList.contains('scale-100')) {
+      return;
+    }
+
+    const TIP_TIME_KEY = 'robot_helper_tip_start';
+    const DAILY_COUNT_KEY = 'robot_helper_tip_daily_count';
+    const LAST_DATE_KEY = 'robot_helper_tip_last_date';
+    const NOW = Date.now();
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+
+    // Check if tip was ALREADY shown during this specific app open session
+    if (sessionStorage.getItem('robot_helper_tip_shown_this_session') === 'true') return;
+
+    let startTime = parseInt(localStorage.getItem(TIP_TIME_KEY), 10);
+    if (!startTime || isNaN(startTime)) {
+      startTime = NOW;
+      localStorage.setItem(TIP_TIME_KEY, startTime.toString());
+    }
+
+    // Stop showing after 3 days have passed since first encounter
+    if (NOW - startTime > THREE_DAYS_MS) {
+      return;
+    }
+
+    // Track daily count (reset on new calendar day, limit to max 6 times per calendar day)
+    const todayStr = new Date().toISOString().split('T')[0];
+    const lastDate = localStorage.getItem(LAST_DATE_KEY);
+    let count = parseInt(localStorage.getItem(DAILY_COUNT_KEY) || '0', 10);
+
+    if (lastDate !== todayStr) {
+      count = 0;
+      localStorage.setItem(LAST_DATE_KEY, todayStr);
+    }
+
+    if (count >= 6) {
+      return;
+    }
+
+    const dismissTip = () => {
+      if (window.ScrapTour) window.ScrapTour.cleanup();
+    };
+
+    if (window.ScrapTour && typeof window.ScrapTour.showTip === 'function') {
+      sessionStorage.setItem('robot_helper_tip_shown_this_session', 'true');
+      localStorage.setItem(DAILY_COUNT_KEY, (count + 1).toString());
+
+      const helperBtn = document.getElementById('btn-dashboard-helper');
+
+      window.ScrapTour.showTip({
+        targetElement: helperBtn || '#btn-dashboard-helper',
+        title: "🤖 CAN'T SEE YOUR ROOMS LIST?",
+        message: "Tap this robot helper icon anytime to view your room list & navigation menu!",
+        position: 'bottom-right',
+        stepIndex: 1,
+        totalSteps: 1,
+        onDismiss: dismissTip
+      });
+    }
   },
 
   bindBottomSheetDrag(modalId) {

@@ -345,6 +345,23 @@ window.ScrapTour = (function () {
     prevBtn.style.visibility = index === 0 ? 'hidden' : 'visible';
     nextBtn.textContent = index === steps.length - 1 ? 'FINISH 🎉' : 'NEXT ▶';
 
+    // Rebind tour navigation buttons to clean functions
+    const newNext = nextBtn.cloneNode(true);
+    const newPrev = prevBtn.cloneNode(true);
+    const skipBtn = document.getElementById('tour-btn-skip');
+
+    nextBtn.parentNode.replaceChild(newNext, nextBtn);
+    prevBtn.parentNode.replaceChild(newPrev, prevBtn);
+
+    newNext.addEventListener('click', nextStep);
+    newPrev.addEventListener('click', prevStep);
+
+    if (skipBtn) {
+      const newSkip = skipBtn.cloneNode(true);
+      skipBtn.parentNode.replaceChild(newSkip, skipBtn);
+      newSkip.addEventListener('click', endTour);
+    }
+
     // Position spotlight around target element
     setTimeout(() => {
       const targetNode = document.querySelector(step.target);
@@ -457,13 +474,31 @@ window.ScrapTour = (function () {
     }, 50);
   }
 
+  function isUpdateModalActive() {
+    return !!(window.isUpdateModalActive || document.getElementById('mitrava-update-modal'));
+  }
+
   function startTour(mode = 'canvas', force = false) {
+    if (isUpdateModalActive()) {
+      console.log('⚡ [ScrapTour] Update alert modal active. Skipping tour guide.');
+      return;
+    }
     currentTourMode = mode;
     const storageKey = getStorageKey();
     if (!force) {
       const completed = localStorage.getItem(storageKey);
       if (completed === 'true') return;
     }
+
+    // Clean up any active date field tooltips or banners when tour guide starts
+    const emptyBanner = document.getElementById('canvas-empty-date-info-banner');
+    if (emptyBanner) emptyBanner.remove();
+
+    const emptySvg = document.getElementById('canvas-empty-date-arrow-svg');
+    if (emptySvg) emptySvg.remove();
+
+    const photoTip = document.getElementById('canvas-photo-longpress-tip');
+    if (photoTip) photoTip.remove();
 
     createTourDOM();
     isActive = true;
@@ -512,15 +547,140 @@ window.ScrapTour = (function () {
   }
 
   function initCanvasOnboarding() {
+    if (isUpdateModalActive()) return;
     setTimeout(() => {
+      if (isUpdateModalActive()) return;
       startTour('canvas', false);
     }, 600);
   }
 
   function initDashboardOnboarding() {
+    if (isUpdateModalActive()) return;
     setTimeout(() => {
+      if (isUpdateModalActive()) return;
       startTour('dashboard', false);
     }, 600);
+  }
+
+  function showTip(options = {}) {
+    if (isUpdateModalActive()) {
+      console.log('⚡ [ScrapTour] Update alert modal active. Skipping tip.');
+      return;
+    }
+    createTourDOM();
+    isActive = true;
+
+    const {
+      targetElement = null,
+      title = '',
+      message = '',
+      position = 'center',
+      stepIndex = 1,
+      totalSteps = 1,
+      onDismiss = null
+    } = options;
+
+    if (tourOverlayEl) {
+      tourOverlayEl.style.display = 'block';
+      tourOverlayEl.style.pointerEvents = 'auto';
+      tourOverlayEl.offsetHeight;
+      tourOverlayEl.classList.add('tour-active');
+    }
+
+    const badgeEl = document.getElementById('tour-badge');
+    const titleEl = document.getElementById('tour-title');
+    const descEl = document.getElementById('tour-desc');
+    const prevBtn = document.getElementById('tour-btn-prev');
+    const nextBtn = document.getElementById('tour-btn-next');
+    const arrowLine = document.getElementById('tour-arrow-line');
+
+    if (badgeEl) badgeEl.textContent = `TIP ${stepIndex}/${totalSteps}`;
+    if (titleEl) titleEl.textContent = title;
+    if (descEl) descEl.textContent = message;
+
+    if (prevBtn) prevBtn.style.visibility = 'hidden';
+    if (nextBtn) nextBtn.textContent = 'GOT IT 👍';
+
+    // Position Card dynamically or center on screen
+    setTimeout(() => {
+      let targetNode = null;
+      if (typeof targetElement === 'string') {
+        targetNode = document.querySelector(targetElement);
+      } else if (targetElement && targetElement.nodeType) {
+        targetNode = targetElement;
+      }
+
+      if (!targetNode || position === 'center' || targetNode.offsetWidth === 0 || targetNode.offsetHeight === 0) {
+        if (spotlightEl) {
+          spotlightEl.style.width = '0px';
+          spotlightEl.style.height = '0px';
+          spotlightEl.style.opacity = '0';
+        }
+        if (arrowLine) arrowLine.setAttribute('d', 'M0,0 Q0,0 0,0');
+
+        if (cardEl) {
+          cardEl.style.position = 'fixed';
+          cardEl.style.top = '50%';
+          cardEl.style.left = '50%';
+          cardEl.style.transform = 'translate(-50%, -50%)';
+        }
+        return;
+      }
+
+      if (spotlightEl) spotlightEl.style.opacity = '1';
+      const rect = targetNode.getBoundingClientRect();
+      const padding = 8;
+      const spotWidth = rect.width + padding * 2;
+      const spotHeight = rect.height + padding * 2;
+      const spotLeft = rect.left - padding;
+      const spotTop = rect.top - padding;
+
+      if (spotlightEl) {
+        spotlightEl.style.width = `${spotWidth}px`;
+        spotlightEl.style.height = `${spotHeight}px`;
+        spotlightEl.style.left = `${spotLeft}px`;
+        spotlightEl.style.top = `${spotTop}px`;
+        spotlightEl.style.borderRadius = `${Math.min(spotWidth, spotHeight) / 2}px`;
+      }
+
+      if (cardEl) {
+        cardEl.style.transform = 'none';
+        const cardRect = cardEl.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        let cardLeft = (viewportWidth - cardRect.width) / 2;
+        let cardTop = (viewportHeight - cardRect.height) / 2;
+
+        if (position === 'bottom-left' || position === 'bottom-right') {
+          cardTop = Math.min(spotTop + spotHeight + 24, viewportHeight - cardRect.height - 20);
+          if (position === 'bottom-left') {
+            cardLeft = Math.max(16, spotLeft);
+          } else {
+            cardLeft = Math.min(viewportWidth - cardRect.width - 16, spotLeft + spotWidth - cardRect.width);
+          }
+        } else if (position === 'top-center') {
+          cardTop = Math.max(16, spotTop - cardRect.height - 24);
+          cardLeft = (viewportWidth - cardRect.width) / 2;
+        }
+
+        const finalCardLeft = Math.max(12, Math.min(cardLeft, viewportWidth - cardRect.width - 12));
+        const finalCardTop = Math.max(12, Math.min(cardTop, viewportHeight - cardRect.height - 12));
+        cardEl.style.left = `${finalCardLeft}px`;
+        cardEl.style.top = `${finalCardTop}px`;
+      }
+    }, 50);
+
+    const handleDismiss = () => {
+      endTour();
+      if (typeof onDismiss === 'function') onDismiss();
+    };
+
+    if (nextBtn) {
+      const newNext = nextBtn.cloneNode(true);
+      nextBtn.parentNode.replaceChild(newNext, nextBtn);
+      newNext.addEventListener('click', handleDismiss);
+    }
   }
 
   return {
@@ -530,6 +690,9 @@ window.ScrapTour = (function () {
     initDashboardOnboarding: initDashboardOnboarding,
     initCanvasOnboarding: initCanvasOnboarding,
     initOnboarding: initCanvasOnboarding,
+    showTip: showTip,
+    isActive: function () { return isActive; },
+    cleanup: endTour,
     next: nextStep,
     prev: prevStep,
     end: endTour

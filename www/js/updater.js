@@ -10,9 +10,14 @@
   // SET TO true TO FORCE TEST THE UPDATE ALERT UI LOCALLY ON DEMO/DEBUG BUILDS
   const TEST_UPDATE_UI = false;
 
+  if (TEST_UPDATE_UI) {
+    window.isUpdateModalActive = true;
+  }
+
   const AppUpdater = {
     async init() {
       if (TEST_UPDATE_UI) {
+        window.isUpdateModalActive = true;
         console.log('⚡ [AppUpdater] TEST_UPDATE_UI is enabled. Displaying update modal dialog.');
         this.showUpdateDialog({ updateAvailable: true });
         return;
@@ -65,15 +70,63 @@
         console.log('⚡ [AppUpdater] Update info:', updateInfo);
 
         if (updateInfo && updateInfo.updateAvailable) {
+          window.isUpdateModalActive = true;
           this.showUpdateDialog(updateInfo);
+        } else {
+          window.isUpdateModalActive = false;
         }
       } catch (err) {
+        window.isUpdateModalActive = false;
         console.error('⚡ [AppUpdater] Error checking for updates:', err);
       }
     },
 
+    isGatewayActive() {
+      const gw = document.getElementById('screen-gateway');
+      if (gw && !gw.classList.contains('hidden')) return true;
+      if (window.App && window.App.activeScreen === 'screen-gateway') return true;
+      const splash = document.getElementById('scrap-loading-splash');
+      if (splash && !splash.classList.contains('hidden')) return true;
+      return false;
+    },
+
     showUpdateDialog(updateInfo) {
       if (document.getElementById('mitrava-update-modal')) return;
+
+      // Do NOT show update alert on Enter Email / Auth screen; defer until dashboard load
+      if (this.isGatewayActive()) {
+        console.log('⚡ [AppUpdater] User is currently on Enter Email / Auth screen. Deferring update alert until login.');
+        this.pendingUpdateInfo = updateInfo;
+        if (!this.gatewayCheckInterval) {
+          let gatewayChecks = 0;
+          this.gatewayCheckInterval = setInterval(() => {
+            gatewayChecks++;
+            if (!this.isGatewayActive() || gatewayChecks >= 100) {
+              clearInterval(this.gatewayCheckInterval);
+              this.gatewayCheckInterval = null;
+              if (!this.isGatewayActive() && this.pendingUpdateInfo) {
+                const info = this.pendingUpdateInfo;
+                this.pendingUpdateInfo = null;
+                this.showUpdateDialog(info);
+              }
+            }
+          }, 800);
+        }
+        return;
+      }
+
+      window.isUpdateModalActive = true;
+
+      // Clean up any visible tour guides or canvas/photo tooltips when update alert is shown
+      if (window.ScrapTour && typeof window.ScrapTour.cleanup === 'function') {
+        try { window.ScrapTour.cleanup(); } catch (e) { }
+      }
+      const activeBanner = document.getElementById('canvas-empty-date-info-banner');
+      if (activeBanner) activeBanner.remove();
+      const activeSvg = document.getElementById('canvas-empty-date-arrow-svg');
+      if (activeSvg) activeSvg.remove();
+      const activePhotoTip = document.getElementById('canvas-photo-longpress-tip');
+      if (activePhotoTip) activePhotoTip.remove();
 
       const modal = document.createElement('div');
       modal.id = 'mitrava-update-modal';
@@ -120,6 +173,7 @@
       btnLater.addEventListener('click', () => {
         // Snooze update prompt for 24 hours so user is not repeatedly interrupted
         localStorage.setItem('mitrava_update_snoozed_until', (Date.now() + 24 * 60 * 60 * 1000).toString());
+        window.isUpdateModalActive = false;
         modal.remove();
       });
 
@@ -165,11 +219,13 @@
     }
   };
 
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
       AppUpdater.init();
-    }, 1500);
-  });
+    });
+  } else {
+    AppUpdater.init();
+  }
 
   window.AppUpdater = AppUpdater;
 })();

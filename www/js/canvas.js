@@ -833,7 +833,7 @@ const ScrapCanvas = {
       const p = document.createElement('span');
       p.className = 'screen-spark-particle';
       p.innerText = emoji;
-      
+
       const size = Math.floor(Math.random() * 12) + 24; // Generates sizes between 24px and 36px
       const left = Math.floor(Math.random() * 100);
       const delay = Math.random() * 1.5;
@@ -877,18 +877,18 @@ const ScrapCanvas = {
           if (!this.processedSparkIds) this.processedSparkIds = new Set();
           if (!this.processedSparkIds.has(id)) {
             this.processedSparkIds.add(id);
-             this.spawnFullScreenSparks(data.emoji || '❤️');
-             if (data.targetElementId === 'center') {
-               this.spawnEmojiBurstOnBubble(data.emoji || '❤️');
-             } else if (data.targetElementId) {
-               const targetDom = document.getElementById(data.targetElementId);
-               if (targetDom) {
-                 this.spawnEmojiBurst(targetDom, data.emoji || '❤️');
-               }
-             }
-           }
-         }
-         delete map[id];
+            this.spawnFullScreenSparks(data.emoji || '❤️');
+            if (data.targetElementId === 'center') {
+              this.spawnEmojiBurstOnBubble(data.emoji || '❤️');
+            } else if (data.targetElementId) {
+              const targetDom = document.getElementById(data.targetElementId);
+              if (targetDom) {
+                this.spawnEmojiBurst(targetDom, data.emoji || '❤️');
+              }
+            }
+          }
+        }
+        delete map[id];
       } else if (data && data.type === 'mood') {
         delete map[id];
       }
@@ -1004,6 +1004,275 @@ const ScrapCanvas = {
         }, 100);
       }
     }
+
+    // Evaluate empty date message and photo long-press tooltip by default
+    this.checkEmptyDateMessage(map);
+    this.checkFirstPhotoTip(map);
+  },
+
+  checkEmptyDateMessage(map) {
+    const bannerId = 'canvas-empty-date-info-banner';
+    const svgId = 'canvas-empty-date-arrow-svg';
+    const existing = document.getElementById(bannerId);
+    const existingSvg = document.getElementById(svgId);
+
+    const activeScreen = document.querySelector('.screen:not(.hidden)');
+    if (activeScreen && activeScreen.id !== 'screen-canvas') {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    if ((window.ScrapTour && typeof ScrapTour.isActive === 'function' && ScrapTour.isActive()) || window.isUpdateModalActive || document.getElementById('mitrava-update-modal')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const targetDate = this.currentDate || todayStr;
+
+    const items = Object.values(map || this.elements || {}).filter(el => {
+      if (!el) return false;
+      const elDate = el.date || todayStr;
+      return elDate === targetDate;
+    });
+
+    if (items.length === 0) {
+      if (!existing) {
+        const inputEl = document.getElementById('canvas-date-picker');
+        const pickerPill = (inputEl && inputEl.parentElement) ? inputEl.parentElement : inputEl;
+
+        // Create SVG Arrow overlay matching Tour Guide arrow style
+        const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svgEl.id = svgId;
+        svgEl.setAttribute('class', 'fixed inset-0 w-full h-full pointer-events-none z-[99989] overflow-visible');
+        svgEl.innerHTML = `
+          <defs>
+            <marker id="canvas-date-arrow-head" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#39ff14" id="canvas-date-arrow-head-path"/>
+            </marker>
+          </defs>
+          <path id="canvas-date-arrow-line" d="M0,0 Q0,0 0,0" marker-end="url(#canvas-date-arrow-head)" stroke="#39ff14" stroke-width="2.5" stroke-dasharray="8 5" fill="none" style="filter: drop-shadow(0 0 5px rgba(57, 255, 20, 0.75)); animation: dashFlow 1s linear infinite;"/>
+        `;
+        document.body.appendChild(svgEl);
+
+        const banner = document.createElement('div');
+        banner.id = bannerId;
+        banner.className = 'animate-fade-in';
+        banner.style.position = 'fixed';
+        banner.style.zIndex = '99990';
+        banner.style.background = 'rgba(10, 4, 20, 0.97)';
+        banner.style.border = '2px solid #39ff14';
+        banner.style.borderRadius = '18px';
+        banner.style.padding = '12px';
+        banner.style.boxShadow = '0 0 20px rgba(57, 255, 20, 0.5), 0 16px 40px rgba(0, 0, 0, 0.95)';
+        banner.style.backdropFilter = 'blur(20px)';
+        banner.style.webkitBackdropFilter = 'blur(20px)';
+        banner.style.color = '#ffffff';
+        banner.style.fontFamily = "'Space Grotesk', system-ui, -apple-system, sans-serif";
+        banner.style.maxWidth = '240px';
+        banner.style.pointerEvents = 'auto';
+
+        banner.innerHTML = `
+          <div class="tour-arrow-label" style="margin-top: 2px; margin-bottom: 6px;">
+            <span class="tour-arrow-label-dot"></span>
+            <span>POINTING TO: DATE PICKER</span>
+          </div>
+          <div class="tour-step-description" style="font-size: 11px; line-height: 1.45; margin-bottom: 10px;">Select another date or upload photos!</div>
+          <div class="tour-controls" style="justify-content: flex-end; padding-top: 8px;">
+            <button id="${bannerId}-gotit" class="tour-btn tour-btn-next" style="padding: 4px 12px; font-size: 10px;">GOT IT 👍</button>
+          </div>
+        `;
+
+        document.body.appendChild(banner);
+
+        // Position banner and calculate SVG curve line pointing directly at date picker pill
+        const updatePositionAndArrow = () => {
+          if (pickerPill) {
+            const rect = pickerPill.getBoundingClientRect();
+            banner.style.top = `${rect.bottom + 24}px`;
+            banner.style.left = `${Math.max(12, rect.left - 10)}px`;
+
+            const cardRect = banner.getBoundingClientRect();
+            const targetCenterX = rect.left + rect.width / 2;
+            const targetCenterY = rect.bottom + 2;
+
+            const startX = cardRect.left + cardRect.width / 3;
+            const startY = cardRect.top;
+
+            const controlX = (startX + targetCenterX) / 2 + (targetCenterX > startX ? 15 : -15);
+            const controlY = (startY + targetCenterY) / 2;
+
+            const arrowLine = document.getElementById('canvas-date-arrow-line');
+            if (arrowLine) {
+              arrowLine.setAttribute('d', `M ${startX},${startY} Q ${controlX},${controlY} ${targetCenterX},${targetCenterY}`);
+            }
+          } else {
+            banner.style.top = '75px';
+            banner.style.left = '16px';
+          }
+        };
+
+        setTimeout(updatePositionAndArrow, 40);
+
+        const dismiss = (e) => {
+          if (e) e.stopPropagation();
+          banner.remove();
+          const curSvg = document.getElementById(svgId);
+          if (curSvg) curSvg.remove();
+        };
+
+        const gotItBtn = document.getElementById(`${bannerId}-gotit`);
+        const closeBtn = document.getElementById(`${bannerId}-close`);
+
+        if (gotItBtn) gotItBtn.addEventListener('click', dismiss);
+        if (closeBtn) closeBtn.addEventListener('click', dismiss);
+      }
+    } else {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+    }
+  },
+
+  checkFirstPhotoTip(map) {
+    const tipId = 'canvas-photo-longpress-tip';
+    const existing = document.getElementById(tipId);
+
+    const activeScreen = document.querySelector('.screen:not(.hidden)');
+    if (activeScreen && activeScreen.id !== 'screen-canvas') {
+      if (existing) existing.remove();
+      return;
+    }
+
+    if ((window.ScrapTour && typeof ScrapTour.isActive === 'function' && ScrapTour.isActive()) || window.isUpdateModalActive || document.getElementById('mitrava-update-modal')) {
+      if (existing) existing.remove();
+      return;
+    }
+
+    if (localStorage.getItem('scrap_photo_longpress_tip_dismissed') === 'true') {
+      if (existing) existing.remove();
+      return;
+    }
+
+    const elementsMap = map || this.elements || {};
+    const photos = Object.entries(elementsMap).filter(
+      ([id, el]) => el && (el.type === 'photo' || el.type === 'image')
+    );
+
+    if (photos.length === 0) {
+      if (existing) existing.remove();
+      return;
+    }
+
+    let firstUploadTime = parseInt(localStorage.getItem('scrap_first_photo_upload_time') || '0', 10);
+    if (!firstUploadTime) {
+      firstUploadTime = Date.now();
+      localStorage.setItem('scrap_first_photo_upload_time', firstUploadTime.toString());
+    }
+
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    if (Date.now() - firstUploadTime > THREE_DAYS_MS) {
+      if (existing) existing.remove();
+      return;
+    }
+
+    const [firstPhotoId] = photos[0];
+
+    const showTipForPhoto = (attempts = 0) => {
+      const photoDom = document.getElementById(`item_${firstPhotoId}`);
+      if (!photoDom) {
+        if (attempts < 25) setTimeout(() => showTipForPhoto(attempts + 1), 120);
+        return;
+      }
+
+      const rect = photoDom.getBoundingClientRect();
+      if (!rect || rect.width === 0 || rect.height === 0) {
+        if (attempts < 25) setTimeout(() => showTipForPhoto(attempts + 1), 120);
+        return;
+      }
+
+      const photoCenterX = rect.left + (rect.width / 2);
+      const isAbove = rect.top > 110;
+      const tipTop = isAbove ? (rect.top - 96) : (rect.bottom + 12);
+
+      const tooltipWidth = 230;
+      let tipLeft = photoCenterX - (tooltipWidth / 2);
+      tipLeft = Math.max(12, Math.min(tipLeft, window.innerWidth - tooltipWidth - 12));
+
+      const arrowX = Math.max(16, Math.min(photoCenterX - tipLeft - 6, tooltipWidth - 24));
+      const arrowStyle = isAbove
+        ? `position: absolute; bottom: -8px; left: ${arrowX}px; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid #39ff14;`
+        : `position: absolute; top: -8px; left: ${arrowX}px; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 8px solid #39ff14;`;
+
+      const currentExisting = document.getElementById(tipId);
+      if (currentExisting) {
+        currentExisting.style.display = 'block';
+        currentExisting.style.top = `${tipTop}px`;
+        currentExisting.style.left = `${tipLeft}px`;
+        const arrowEl = currentExisting.querySelector('.photo-tip-arrow');
+        if (arrowEl) arrowEl.style.cssText = arrowStyle;
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        if (document.getElementById(tipId)) return;
+
+        const banner = document.createElement('div');
+        banner.id = tipId;
+        banner.style.position = 'fixed';
+        banner.style.top = `${tipTop}px`;
+        banner.style.left = `${tipLeft}px`;
+        banner.style.width = `${tooltipWidth}px`;
+        banner.style.background = 'rgba(10, 4, 20, 0.97)';
+        banner.style.border = '1.5px solid rgba(57, 255, 20, 0.35)';
+        banner.style.borderRadius = '20px';
+        banner.style.padding = '14px 16px 12px';
+        banner.style.boxShadow = '0 24px 60px rgba(0, 0, 0, 0.95), 0 0 24px rgba(57, 255, 20, 0.15)';
+        banner.style.backdropFilter = 'blur(20px)';
+        banner.style.webkitBackdropFilter = 'blur(20px)';
+        banner.style.zIndex = '99995';
+        banner.style.color = '#ffffff';
+        banner.style.fontFamily = "'Space Grotesk', system-ui, -apple-system, sans-serif";
+
+        banner.innerHTML = `
+          <div class="photo-tip-arrow" style="${arrowStyle}"></div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 9px; font-weight: 800; color: #39ff14; text-transform: uppercase; letter-spacing: 0.14em; background: rgba(57, 255, 20, 0.1); padding: 3px 9px; border-radius: 99px; border: 1px solid rgba(57, 255, 20, 0.25);">
+              💡 PHOTO TIP
+            </span>
+            <button id="${tipId}-close" style="background: transparent; border: none; color: rgba(255, 255, 255, 0.5); font-size: 11px; font-weight: 800; cursor: pointer; padding: 2px 4px;">
+              ✕
+            </button>
+          </div>
+          <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin-bottom: 4px;">Long-Press Photo</div>
+          <div style="font-size: 11px; line-height: 1.5; color: rgba(255, 255, 255, 0.8); margin-bottom: 10px;">
+            Tap & hold photo for borders, doodles, captions & reactions!
+          </div>
+          <div style="display: flex; justify-content: flex-end; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+            <button id="${tipId}-gotit" style="background: #39ff14; color: #000000; font-size: 10px; font-weight: 900; text-transform: uppercase; padding: 5px 14px; border-radius: 99px; border: none; cursor: pointer; box-shadow: 0 0 12px rgba(57, 255, 20, 0.35);">
+              GOT IT 👍
+            </button>
+          </div>
+        `;
+        document.body.appendChild(banner);
+
+        const dismissTip = () => {
+          localStorage.setItem('scrap_photo_longpress_tip_dismissed', 'true');
+          if (banner) banner.remove();
+        };
+
+        const closeBtn = document.getElementById(`${tipId}-close`);
+        const gotItBtn = document.getElementById(`${tipId}-gotit`);
+        if (closeBtn) closeBtn.addEventListener('click', dismissTip);
+        if (gotItBtn) gotItBtn.addEventListener('click', dismissTip);
+
+        photoDom.addEventListener('contextmenu', dismissTip, { once: true });
+      });
+    };
+
+    // Display tip automatically BY DEFAULT over photo
+    showTipForPhoto();
   },
 
   renderOrUpdateElementDom(id, data) {
@@ -1735,7 +2004,7 @@ const ScrapCanvas = {
           // Rotate up to 12 degrees max
           const rotX = -(dy / yc) * 12;
           const rotY = (dx / xc) * 12;
-          
+
           card.style.transition = 'none';
           card.style.transform = `perspective(600px) rotateX(${rotX}deg) rotateY(${rotY}deg) scale3d(1.04, 1.04, 1.04)`;
         };
@@ -3191,7 +3460,7 @@ const ScrapCanvas = {
 
         const itemEl = document.createElement('div');
         itemEl.className = 'flex items-center gap-3 w-full cursor-pointer py-1.5 px-2 border border-transparent rounded-xl transition-all border-b border-slate-100 last:border-0 pointer-events-auto ' + rowBg;
-        
+
         itemEl.innerHTML = `
           <!-- Avatar -->
           <div class="w-7 h-7 rounded-full border ${avatarBorder} ${avatarBg} flex items-center justify-center text-[9px] font-bold font-sans ${avatarText} flex-shrink-0 shadow-sm overflow-hidden">
@@ -3283,7 +3552,7 @@ const ScrapCanvas = {
   // Modal Bottom Sheet dialog to select member actions safely without layout shifts
   showMemberActionsModal(member, isRoomOwner, isBlocked) {
     const initials = member.name.substring(0, 2).toUpperCase();
-    
+
     let avatarUrl = '';
     if (member.avatar) {
       avatarUrl = `https://api.myscrapmemories.com/api/files/users/${member.id}/${member.avatar}`;
@@ -3292,11 +3561,11 @@ const ScrapCanvas = {
     // Create dark backdrop overlay
     const overlay = document.createElement('div');
     overlay.className = 'fixed inset-0 bg-black/60 z-[100] flex items-end sm:items-center justify-center p-4 transition-all duration-300 pointer-events-auto opacity-0';
-    
+
     // Create card container
     const card = document.createElement('div');
     card.className = 'bg-white rounded-2xl w-full max-w-xs p-5 shadow-2xl transition-all duration-300 transform translate-y-full sm:translate-y-0 sm:scale-95 text-black flex flex-col gap-4 select-none';
-    
+
     card.innerHTML = `
       <div class="flex items-center gap-3 border-b border-slate-100 pb-3">
         <div class="w-9 h-9 rounded-full border border-purple-200 bg-purple-50 flex items-center justify-center text-xs font-bold text-purple-600 flex-shrink-0 overflow-hidden">
@@ -3312,9 +3581,9 @@ const ScrapCanvas = {
       <div class="flex flex-col gap-2">
         <!-- Block Button -->
         <button class="btn-modal-block w-full py-2.5 rounded-xl border font-bold text-[9px] uppercase tracking-wider transition-all active:scale-95 ${isBlocked
-          ? 'bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100'
-          : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-250'
-        }">
+        ? 'bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100'
+        : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-250'
+      }">
           ${isBlocked ? '🛡️ Unblock User' : '🚫 Block User'}
         </button>
         
@@ -3326,33 +3595,33 @@ const ScrapCanvas = {
         ` : ''}
       </div>
     `;
-    
+
     overlay.appendChild(card);
     document.body.appendChild(overlay);
-    
+
     // Trigger transition animations
     setTimeout(() => {
       overlay.classList.remove('opacity-0');
       card.classList.remove('translate-y-full', 'sm:scale-95');
     }, 20);
-    
+
     const closeModal = () => {
       overlay.classList.add('opacity-0');
       card.classList.add('translate-y-full', 'sm:scale-95');
       setTimeout(() => overlay.remove(), 250);
     };
-    
+
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeModal();
     });
-    
+
     card.querySelector('.btn-close-modal').addEventListener('click', closeModal);
-    
+
     card.querySelector('.btn-modal-block').addEventListener('click', async () => {
       closeModal();
       await this.toggleBlockUserAction(member.id, member.name);
     });
-    
+
     if (isRoomOwner) {
       card.querySelector('.btn-modal-remove').addEventListener('click', async () => {
         closeModal();
@@ -3424,7 +3693,7 @@ const ScrapCanvas = {
 
   updateSideSquadBubbles() {
     let container = document.getElementById('active-squad-bubbles-wall');
-    
+
     // Hide squad bubbles container if not on canvas screen or not logged in
     const activeScreen = window.ScrapApp ? window.ScrapApp.activeScreen : '';
     const isLoggedIn = window.pb && pb.authStore.isValid;
@@ -3505,7 +3774,7 @@ const ScrapCanvas = {
 
     const picker = document.createElement('div');
     picker.id = 'reaction-picker-squad';
-    
+
     const rect = bubbleBtn.getBoundingClientRect();
 
     picker.style.position = 'fixed';

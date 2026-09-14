@@ -396,11 +396,15 @@ const ScrapAds = (() => {
         
         observer.observe(wrapper);
 
-        // Clean up observer if element is destroyed
+        // Clean up observer if element is destroyed (capped check to prevent background timer leak)
+        let destroyChecks = 0;
         const destroyCheck = setInterval(() => {
-          if (!document.body.contains(wrapper)) {
-            observer.disconnect();
-            stopCycle();
+          destroyChecks++;
+          if (!document.body.contains(wrapper) || destroyChecks >= 12) {
+            if (!document.body.contains(wrapper)) {
+              observer.disconnect();
+              stopCycle();
+            }
             clearInterval(destroyCheck);
           }
         }, 10000);

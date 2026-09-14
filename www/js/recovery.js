@@ -125,11 +125,77 @@ const ScrapRecovery = {
 
   // Delete key for a group room
   async deleteRoomKey(roomId) {
+    // Retrieve room title BEFORE clearing localStorage keys so we can match export filenames
+    const rawTitle = localStorage.getItem(`scrap_room_title_${roomId}`) || '';
+    const roomTitle = rawTitle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().substring(0, 8);
+
     if (this.vault.roomKeys) {
       delete this.vault.roomKeys[roomId];
     }
     delete this.roomKeysCache[roomId];
     
+    // Clean up room-specific local storage keys & native preferences
+    const roomKeysToClean = [
+      `scrap_room_is_owner_${roomId}`,
+      `scrap_room_title_${roomId}`,
+      `scrap_room_canvas_data_${roomId}`,
+      `scrap_robo_x`,
+      `scrap_robo_y`
+    ];
+
+    roomKeysToClean.forEach(k => localStorage.removeItem(k));
+    if (window.ScrapStorage) {
+      for (const k of roomKeysToClean) {
+        await ScrapStorage.remove(k).catch(() => {});
+      }
+    }
+
+    // Clean up exported key files from phone storage (DOCUMENTS and CACHE directories)
+    try {
+      const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      if (Filesystem) {
+        for (const dir of ['DOCUMENTS', 'CACHE']) {
+          try {
+            const res = await Filesystem.readdir({ path: '', directory: dir });
+            if (res && res.files) {
+              for (const file of res.files) {
+                const fileName = typeof file === 'string' ? file : file.name;
+                if (fileName && fileName.endsWith('.scrapkey')) {
+                  const lowerName = fileName.toLowerCase();
+                  let shouldDelete = false;
+
+                  if (roomTitle && lowerName.includes(roomTitle)) {
+                    shouldDelete = true;
+                  } else {
+                    // Read file content as backup check to see if it belongs to this room
+                    try {
+                      const fileRes = await Filesystem.readFile({
+                        path: fileName,
+                        directory: dir,
+                        encoding: 'utf8'
+                      });
+                      const content = fileRes && (fileRes.data || fileRes.content || fileRes);
+                      const str = typeof content === 'string' ? content : JSON.stringify(content);
+                      if (str && (str.includes(roomId) || (roomTitle && str.toLowerCase().includes(roomTitle)))) {
+                        shouldDelete = true;
+                      }
+                    } catch (_) {}
+                  }
+
+                  if (shouldDelete) {
+                    console.log(`[deleteRoomKey] Deleting backup key file: ${dir}/${fileName}`);
+                    await Filesystem.deleteFile({ path: fileName, directory: dir }).catch(() => {});
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (fsErr) {
+      console.warn('[deleteRoomKey] Filesystem cleanup warning:', fsErr);
+    }
+
     // Re-encrypt vault if PIN is stored in session
     const pin = sessionStorage.getItem('scrap_pin_session') || '000000';
     await this.saveVaultToLocalAndDrive(pin);
