@@ -124,12 +124,19 @@ const ScrapRecovery = {
   },
 
   // Delete key for a group room
-  async deleteRoomKey(roomId) {
+  async deleteRoomKey(roomId, targetTitle = '') {
     // Retrieve room title BEFORE clearing localStorage keys so we can match export filenames
-    const rawTitle = localStorage.getItem(`scrap_room_title_${roomId}`) || '';
-    const roomTitle = rawTitle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().substring(0, 8);
+    const cachedTitle = localStorage.getItem(`scrap_room_title_${roomId}`) || '';
+    const rawTitle = targetTitle || cachedTitle;
+    const roomTitle = rawTitle ? rawTitle.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().substring(0, 8) : '';
 
-    if (this.vault.roomKeys) {
+    // Grab target room key JWK from memory/vault before removing it
+    let targetKeyK = null;
+    if (this.vault && this.vault.roomKeys && this.vault.roomKeys[roomId]) {
+      targetKeyK = this.vault.roomKeys[roomId].k || null;
+    }
+
+    if (this.vault && this.vault.roomKeys) {
       delete this.vault.roomKeys[roomId];
     }
     delete this.roomKeysCache[roomId];
@@ -154,6 +161,7 @@ const ScrapRecovery = {
     try {
       const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
       if (Filesystem) {
+        const sessionPin = sessionStorage.getItem('scrap_pin_session') || '000000';
         for (const dir of ['DOCUMENTS', 'CACHE']) {
           try {
             const res = await Filesystem.readdir({ path: '', directory: dir });
@@ -176,7 +184,45 @@ const ScrapRecovery = {
                       });
                       const content = fileRes && (fileRes.data || fileRes.content || fileRes);
                       const str = typeof content === 'string' ? content : JSON.stringify(content);
-                      if (str && (str.includes(roomId) || (roomTitle && str.toLowerCase().includes(roomTitle)))) {
+                      
+                      let parsed = null;
+                      try { parsed = typeof content === 'object' ? content : JSON.parse(str); } catch (_) {}
+
+                      if (parsed) {
+                        if (parsed.roomId === roomId || (roomTitle && parsed.roomTitle && parsed.roomTitle.toLowerCase().includes(roomTitle))) {
+                          shouldDelete = true;
+                        } else if (parsed.vault && parsed.salt) {
+                          const userId = (typeof ScrapFirebase !== 'undefined' && ScrapFirebase.userId) || localStorage.getItem('scrap_user_id') || 'default';
+                          const curVault = localStorage.getItem(`scrap_local_vault_${userId}`);
+                          const curSalt = localStorage.getItem(`scrap_local_salt_${userId}`);
+
+                          if ((curVault && parsed.vault === curVault) || (curSalt && parsed.salt === curSalt)) {
+                            shouldDelete = true;
+                          } else {
+                            // Try unlocking vault to check if this scrapkey file contains key for roomId or matching key bytes
+                            try {
+                              const saltBuf = ScrapCrypto.base64ToArrayBuffer(parsed.salt);
+                              const aesKey = await ScrapCrypto.deriveKeyFromPin(sessionPin, saltBuf);
+                              const decBuf = await ScrapCrypto.decryptData(ScrapCrypto.base64ToArrayBuffer(parsed.vault), aesKey);
+                              const fileVaultStr = ScrapCrypto.bufferToString(decBuf);
+                              const fileVault = JSON.parse(fileVaultStr);
+                              if (fileVault && fileVault.roomKeys) {
+                                if (fileVault.roomKeys[roomId]) {
+                                  shouldDelete = true;
+                                } else if (targetKeyK) {
+                                  for (const rk of Object.values(fileVault.roomKeys)) {
+                                    if (rk && rk.k === targetKeyK) {
+                                      shouldDelete = true;
+                                      break;
+                                    }
+                                  }
+                                }
+                              }
+                            } catch (_) {}
+                          }
+                        }
+                      }
+                      if (!shouldDelete && str && ((roomId && str.includes(roomId)) || (roomTitle && str.toLowerCase().includes(roomTitle)))) {
                         shouldDelete = true;
                       }
                     } catch (_) {}

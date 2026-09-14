@@ -230,16 +230,20 @@ const ScrapFirebase = {
     try {
       let record;
       const updateData = {
-        title: window.ScrapApp.currentRoomTitle || 'Squad Space',
         board_date: dateStr,
         board_state: JSON.stringify(canvasState)
       };
 
+      const titleToSync = window.ScrapApp && window.ScrapApp.currentRoomTitle;
       const targetRecordId = this.currentBoardRecordId || this.roomId;
       if (targetRecordId) {
+        if (titleToSync && titleToSync !== targetRecordId && titleToSync !== this.roomId && titleToSync !== 'pb_temp_room') {
+          updateData.title = titleToSync;
+        }
         record = await pb.collection('boards').update(targetRecordId, updateData);
         this.currentBoardRecordId = record.id;
       } else {
+        updateData.title = (titleToSync && titleToSync !== 'pb_temp_room') ? titleToSync : 'Squad Space';
         updateData.user = pb.authStore.model.id;
         record = await pb.collection('boards').create(updateData);
         this.currentBoardRecordId = record.id;
@@ -263,6 +267,17 @@ const ScrapFirebase = {
       if (this.roomId !== requestedRoomId || this.roomSubscriptionToken !== requestedSubscriptionToken) return;
       this.currentBoardRecordId = record.id;
       this.currentBoardMedia = record.media || [];
+
+      if (record && record.title && record.title !== record.id && window.ScrapApp) {
+        const currentTitle = window.ScrapApp.currentRoomTitle;
+        if (!currentTitle || currentTitle === record.id || currentTitle === 'Squad Space') {
+          window.ScrapApp.currentRoomTitle = record.title;
+          localStorage.setItem('scrap_current_room_title', record.title);
+          localStorage.setItem('scrap_room_title_' + record.id, record.title);
+          const titleEl = document.getElementById('canvas-room-title');
+          if (titleEl) titleEl.innerText = `ROOM: ${record.title.toUpperCase()}`;
+        }
+      }
 
       if (record && window.ScrapCanvas) {
         const owner = record.expand && record.expand.user;
@@ -368,6 +383,17 @@ const ScrapFirebase = {
         if (e.action === 'update') {
           this.currentBoardRecordId = e.record.id;
           this.currentBoardMedia = e.record.media || [];
+
+          if (e.record && e.record.title && e.record.title !== e.record.id && window.ScrapApp) {
+            const currentTitle = window.ScrapApp.currentRoomTitle;
+            if (!currentTitle || currentTitle === e.record.id) {
+              window.ScrapApp.currentRoomTitle = e.record.title;
+              localStorage.setItem('scrap_current_room_title', e.record.title);
+              localStorage.setItem('scrap_room_title_' + e.record.id, e.record.title);
+              const titleEl = document.getElementById('canvas-room-title');
+              if (titleEl) titleEl.innerText = `ROOM: ${e.record.title.toUpperCase()}`;
+            }
+          }
 
           // Extract and update joined members on realtime updates
           if (e.record) {

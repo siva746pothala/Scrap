@@ -425,51 +425,55 @@ window.ScrapTour = (function () {
       const arrowLabelText = document.getElementById('tour-arrow-label-text');
 
       if (arrowLine && arrowLabel) {
-        arrowLabelText.textContent = `POINTING TO: ${step.title.toUpperCase()}`;
-        
-        // Target center
-        const targetCenterX = rect.left + rect.width / 2;
-        const targetCenterY = rect.top + rect.height / 2;
-
-        // Card edge point depending on relative position
-        const updatedCardRect = {
-          left: finalCardLeft,
-          top: finalCardTop,
-          width: cardRect.width,
-          height: cardRect.height
-        };
-
-        let startX = updatedCardRect.left + updatedCardRect.width / 2;
-        let startY = updatedCardRect.top;
-
-        if (targetCenterY > updatedCardRect.top + updatedCardRect.height) {
-          // Target is below card
-          startY = updatedCardRect.top + updatedCardRect.height;
-        } else if (targetCenterY < updatedCardRect.top) {
-          // Target is above card
-          startY = updatedCardRect.top;
-        }
-
-        // Calculate outer circle edge target point so arrow head stops AT the outer spotlight boundary, not inside the element/image
-        let endX = targetCenterX;
-        let endY = targetCenterY;
-
-        if (targetCenterY > startY) {
-          // Pointing down to target -> stop at top outer edge of spotlight circle
-          endY = spotTop - 2;
-        } else if (targetCenterY < startY) {
-          // Pointing up to target -> stop at bottom outer edge of spotlight circle
-          endY = spotTop + spotHeight + 2;
+        if (step.position === 'center') {
+          arrowLine.setAttribute('d', 'M0,0 Q0,0 0,0');
         } else {
-          // Side positioning
-          endX = startX > targetCenterX ? spotLeft + spotWidth + 2 : spotLeft - 2;
+          arrowLabelText.textContent = `POINTING TO: ${step.title.toUpperCase()}`;
+          
+          // Target center
+          const targetCenterX = rect.left + rect.width / 2;
+          const targetCenterY = rect.top + rect.height / 2;
+
+          // Card edge point depending on relative position
+          const updatedCardRect = {
+            left: finalCardLeft,
+            top: finalCardTop,
+            width: cardRect.width,
+            height: cardRect.height
+          };
+
+          let startX = updatedCardRect.left + updatedCardRect.width / 2;
+          let startY = updatedCardRect.top;
+
+          if (targetCenterY > updatedCardRect.top + updatedCardRect.height) {
+            // Target is below card
+            startY = updatedCardRect.top + updatedCardRect.height;
+          } else if (targetCenterY < updatedCardRect.top) {
+            // Target is above card
+            startY = updatedCardRect.top;
+          }
+
+          // Calculate outer circle edge target point so arrow head stops AT the outer spotlight boundary, not inside the element/image
+          let endX = targetCenterX;
+          let endY = targetCenterY;
+
+          if (targetCenterY > startY) {
+            // Pointing down to target -> stop at top outer edge of spotlight circle
+            endY = spotTop - 2;
+          } else if (targetCenterY < startY) {
+            // Pointing up to target -> stop at bottom outer edge of spotlight circle
+            endY = spotTop + spotHeight + 2;
+          } else {
+            // Side positioning
+            endX = startX > targetCenterX ? spotLeft + spotWidth + 2 : spotLeft - 2;
+          }
+
+          // Control point for smooth curve
+          const controlX = (startX + endX) / 2 + (endX > startX ? 20 : -20);
+          const controlY = (startY + endY) / 2;
+
+          arrowLine.setAttribute('d', `M ${startX},${startY} Q ${controlX},${controlY} ${endX},${endY}`);
         }
-
-        // Control point for smooth curve
-        const controlX = (startX + endX) / 2 + (endX > startX ? 20 : -20);
-        const controlY = (startY + endY) / 2;
-
-        arrowLine.setAttribute('d', `M ${startX},${startY} Q ${controlX},${controlY} ${endX},${endY}`);
       }
     }, 50);
   }

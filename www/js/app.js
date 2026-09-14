@@ -177,71 +177,342 @@ const ScrapApp = {
   qrScanStream: null,
   qrScanAnimationFrameId: null,
   qrScanActive: false,
+  inAppVideoTrack: null,
+  inAppAnimationFrame: null,
+  qrAutoAdjustLastAt: 0,
 
   async startQRScanner() {
-    if (this.qrScanActive) return;
-
-    const BarcodeScanner = window.Capacitor &&
-      window.Capacitor.Plugins &&
-      window.Capacitor.Plugins.BarcodeScanner;
-
-    if (!BarcodeScanner) {
-      alert('Native Barcode Scanner is only available on the Android app.');
-      return;
+    this.qrScanActive = false;
+    if (this.inAppAnimationFrame) {
+      clearTimeout(this.inAppAnimationFrame);
+      this.inAppAnimationFrame = null;
+    }
+    if (this.inAppVideoTrack) {
+      try { this.inAppVideoTrack.stop(); } catch (e) {}
+      this.inAppVideoTrack = null;
     }
 
-    try {
-      // Step 1: Check/Request camera permissions
-      let { camera } = await BarcodeScanner.checkPermissions();
-      if (camera !== 'granted') {
-        const result = await BarcodeScanner.requestPermissions();
-        camera = result.camera;
-      }
+    const prevVideo = document.getElementById('inapp-qr-video');
+    if (prevVideo) {
+      prevVideo.srcObject = null;
+      prevVideo.style.display = 'block';
+    }
 
-      if (camera !== 'granted') {
-        alert('Camera permission is required to scan QR codes. Please enable it in App Settings.');
+    document.body.classList.remove('barcode-scanner-active');
+    document.documentElement.classList.remove('barcode-scanner-active');
+
+    // Always start HTML5 in-app video camera feed (No black screen!)
+    await this.startInAppQRScanner();
+  },
+
+  cleanUpAllTooltipsAndArrows() {
+    const emptyBanner = document.getElementById('canvas-empty-date-info-banner');
+    if (emptyBanner) emptyBanner.remove();
+    const emptySvg = document.getElementById('canvas-empty-date-arrow-svg');
+    if (emptySvg) emptySvg.remove();
+    const photoTip = document.getElementById('canvas-photo-longpress-tip');
+    if (photoTip) photoTip.remove();
+    const robotTip = document.getElementById('dashboard-robot-helper-tip');
+    if (robotTip) robotTip.remove();
+    const arrowLine = document.getElementById('tour-arrow-line');
+    if (arrowLine) arrowLine.setAttribute('d', 'M0,0 Q0,0 0,0');
+  },
+
+  async startInAppQRScanner() {
+    this.cleanUpAllTooltipsAndArrows();
+
+    const modal = document.getElementById('modal-inapp-qr-scanner');
+    const video = document.getElementById('inapp-qr-video');
+    const canvas = document.getElementById('inapp-qr-canvas');
+    const statusText = document.getElementById('inapp-qr-status');
+    if (!modal || !video || !canvas) return;
+
+    // Show modal immediately
+    modal.classList.remove('hidden');
+    video.style.display = 'block';
+    if (statusText) statusText.innerText = 'Starting camera...';
+    this.qrAutoAdjustLastAt = 0;
+    this.qrScanActive = true;
+
+    // High-compatibility camera stream for Android Camera2 HAL
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false
+      });
+    } catch (e1) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        });
+      } catch (e2) {
+        console.warn('[QRScanner] Camera access failed:', e2);
+        this.qrScanActive = false;
+        if (statusText) statusText.innerText = 'Camera unavailable - use a photo';
         return;
       }
-
-      // Step 1.5: On Android, ensure Google Barcode Scanner ML Kit module is available/installed
-      if (window.Capacitor.getPlatform() === 'android') {
-        try {
-          const isModuleAvailable = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
-          if (!isModuleAvailable.available) {
-            alert('Downloading native barcode scanner components from Google Play Services. Please wait a few seconds and tap Start Scanner again.');
-            await BarcodeScanner.installGoogleBarcodeScannerModule();
-            return;
-          }
-        } catch (e) {
-
-        }
-      }
-
-      this.qrScanActive = true;
-
-      // Step 2: Use native pre-built scan modal (resolves WebView opaque/visibility issues)
-      const { barcodes } = await BarcodeScanner.scan({
-        formats: ['QR_CODE']
-      });
-
-      this.qrScanActive = false;
-
-      if (barcodes && barcodes.length > 0) {
-        const rawValue = barcodes[0].rawValue;
-        if (rawValue) {
-          await this.processQRInvitePayload(rawValue);
-        }
-      }
-
-    } catch (err) {
-
-      this.qrScanActive = false;
-      alert('Scanner error: ' + (err.message || JSON.stringify(err)));
     }
+
+    this.inAppVideoTrack = stream.getVideoTracks()[0];
+    video.srcObject = stream;
+
+    // Apply camera capabilities without changing zoom while decoding.
+    try {
+      const caps = this.inAppVideoTrack.getCapabilities ? this.inAppVideoTrack.getCapabilities() : {};
+      const constraints = { advanced: [] };
+      if (caps.focusMode && caps.focusMode.includes('continuous')) {
+        constraints.advanced.push({ focusMode: 'continuous' });
+      }
+      if (caps.zoom) {
+        constraints.advanced.push({ zoom: caps.zoom.min || 1 });
+      }
+      if (constraints.advanced.length > 0) {
+        await this.inAppVideoTrack.applyConstraints(constraints);
+      }
+    } catch (e) {
+      console.debug('[QRScanner] Focus/Zoom setup note:', e);
+    }
+
+    // Apply digital zoom CSS scale transform so camera feed fills the viewfinder nicely
+    video.style.transform = 'scale(1.5)';
+    video.style.transformOrigin = 'center center';
+    // Play video — don't await, just trigger it
+    video.play().catch(e => console.warn('[QRScanner] video.play() error:', e));
+
+    // Wait for video to have data
+    await new Promise((resolve) => {
+      if (video.readyState >= 2) return resolve();
+      video.addEventListener('loadeddata', resolve, { once: true });
+      setTimeout(resolve, 2000); // max wait 2 seconds
+    });
+
+    if (!this.qrScanActive) return; // user may have closed before camera ready
+    if (statusText) statusText.innerText = 'Align QR code within frame';
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let detector = null;
+    if ('BarcodeDetector' in window) {
+      try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {}
+    }
+
+    const MAX_SCAN_DIM = 960; // High resolution scanning
+    let scanFrameCount = 0;
+
+    const scanFrame = async () => {
+      if (!this.qrScanActive) return;
+      scanFrameCount++;
+
+      if (video.readyState >= video.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+        let decodedText = null;
+
+        // Visual live status update every 15 frames so user sees active scanner status
+        if (scanFrameCount % 15 === 0 && statusText) {
+          statusText.innerText = `Scanning... (${video.videoWidth}x${video.videoHeight} • Frame ${scanFrameCount})`;
+        }
+
+        // 1. Try native BarcodeDetector on video element directly
+        if (detector) {
+          try {
+            const barcodes = await detector.detect(video);
+            if (barcodes && barcodes.length > 0) {
+              if (barcodes[0].rawValue) decodedText = barcodes[0].rawValue;
+            }
+          } catch (e) {}
+        }
+
+        // 2. Optimized jsQR Scan Pass (Scaled to 640px max dimension for fast high-contrast decoding)
+        if (!decodedText && window.jsQR) {
+          const maxDim = 640;
+          const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+          const w = Math.max(1, Math.round(video.videoWidth * scale));
+          const h = Math.max(1, Math.round(video.videoHeight * scale));
+
+          if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+          }
+          ctx.drawImage(video, 0, 0, w, h);
+
+          // Pass 1: Full frame (1.0x)
+          try {
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const code = window.jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
+            if (code && code.data) decodedText = code.data;
+          } catch (e) {}
+
+          // Pass 2: Center Crop (1.8x Zoom)
+          if (!decodedText) {
+            try {
+              const cropW = Math.round(w * 0.55);
+              const cropH = Math.round(h * 0.55);
+              const cropX = Math.round((w - cropW) / 2);
+              const cropY = Math.round((h - cropH) / 2);
+              const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
+              const code = window.jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
+              if (code && code.data) decodedText = code.data;
+            } catch (e) {}
+          }
+
+          // Pass 3: Tight Center Crop (3.0x Zoom)
+          if (!decodedText) {
+            try {
+              const cropW = Math.round(w * 0.33);
+              const cropH = Math.round(h * 0.33);
+              const cropX = Math.round((w - cropW) / 2);
+              const cropY = Math.round((h - cropH) / 2);
+              const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
+              const code = window.jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
+              if (code && code.data) decodedText = code.data;
+            } catch (e) {}
+          }
+        }
+
+        if (decodedText) {
+          console.log('[QRScanner] Decoded successfully:', decodedText);
+
+          // 1. Instantly stop active scan loop & stop camera track (Samsung-style immediate capture & release)
+          this.qrScanActive = false;
+          if (this.inAppAnimationFrame) {
+            clearTimeout(this.inAppAnimationFrame);
+            this.inAppAnimationFrame = null;
+          }
+          if (this.inAppVideoTrack) {
+            try { this.inAppVideoTrack.stop(); } catch(e){}
+            this.inAppVideoTrack = null;
+          }
+
+          // 2. Pause video preview so current frame freezes on user screen immediately
+          try { video.pause(); } catch(e){}
+
+          // 3. Visual feedback: update badge to show captured status
+          if (statusText) {
+            statusText.innerText = 'QR Code Captured ✓';
+            statusText.classList.add('bg-emerald-600', 'text-white');
+          }
+
+          // 4. Close scanner modal, clean up fully, and process payload
+          setTimeout(async () => {
+            this.stopInAppQRScanner();
+            document.getElementById('modal-invite')?.classList.add('hidden');
+            await this.processQRInvitePayload(decodedText);
+          }, 250);
+
+          return;
+        }
+      }
+
+      // Fast scan loop: 50ms interval (~20 FPS) for instant detection
+      this.inAppAnimationFrame = setTimeout(scanFrame, 50);
+    };
+
+    this.inAppAnimationFrame = setTimeout(scanFrame, 150); // slight initial delay for camera warm-up
+  },
+
+  stopInAppQRScanner() {
+    this.qrScanActive = false;
+
+    // Clean up native transparent scanner if active
+    const BarcodeScanner = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BarcodeScanner;
+    if (this.isNativeScanning && BarcodeScanner) {
+      try {
+        if (this.nativeBarcodeListener) {
+          this.nativeBarcodeListener.remove();
+          this.nativeBarcodeListener = null;
+        }
+        if (BarcodeScanner.stopScan) BarcodeScanner.stopScan();
+        if (BarcodeScanner.showBackground) BarcodeScanner.showBackground();
+      } catch (e) {
+        console.warn('Error stopping native scan:', e);
+      }
+      this.isNativeScanning = false;
+      document.body.classList.remove('barcode-scanner-active');
+    }
+
+    if (this.inAppAnimationFrame) {
+      clearTimeout(this.inAppAnimationFrame);
+      this.inAppAnimationFrame = null;
+    }
+    if (this.inAppVideoTrack) {
+      this.inAppVideoTrack.stop();
+      this.inAppVideoTrack = null;
+    }
+    const video = document.getElementById('inapp-qr-video');
+    if (video) {
+      video.srcObject = null;
+      video.style.display = 'block';
+    }
+    document.getElementById('modal-inapp-qr-scanner')?.classList.add('hidden');
+  },
+
+  decodeQRImage(source) {
+    if (!window.jsQR || !source) return null;
+
+    const sourceWidth = source.videoWidth || source.naturalWidth || source.width;
+    const sourceHeight = source.videoHeight || source.naturalHeight || source.height;
+    if (!sourceWidth || !sourceHeight) return null;
+
+    const maxDimension = 1600;
+    const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(source, 0, 0, width, height);
+
+    const attempts = [
+      { x: 0, y: 0, width, height },
+      { x: width * 0.1, y: height * 0.1, width: width * 0.8, height: height * 0.8 },
+      { x: width * 0.2, y: height * 0.2, width: width * 0.6, height: height * 0.6 }
+    ];
+    for (const attempt of attempts) {
+      const cropWidth = Math.max(1, Math.round(attempt.width));
+      const cropHeight = Math.max(1, Math.round(attempt.height));
+      try {
+        const imageData = context.getImageData(
+          Math.round(attempt.x), Math.round(attempt.y), cropWidth, cropHeight
+        );
+        const code = window.jsQR(imageData.data, cropWidth, cropHeight, {
+          inversionAttempts: 'attemptBoth'
+        });
+        if (code && code.data) return code.data;
+      } catch (error) {
+        console.debug('[QRScanner] Image decode attempt failed:', error);
+      }
+    }
+    return null;
+  },
+
+  async scanQRFromImageFile(file) {
+    if (!file || !window.jsQR) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const image = new Image();
+      image.onload = async () => {
+        const decodedText = this.decodeQRImage(image);
+        if (decodedText) {
+          this.stopInAppQRScanner();
+          document.getElementById('modal-invite')?.classList.add('hidden');
+          await this.processQRInvitePayload(decodedText);
+        } else if (window.ScrapDialog) {
+          await window.ScrapDialog.alert('No valid QR code found in the selected image.');
+        }
+      };
+      image.onerror = async () => {
+        if (window.ScrapDialog) await window.ScrapDialog.alert('The selected image could not be opened.');
+      };
+      image.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
   },
 
   async stopQRScanner() {
-    this.qrScanActive = false;
+    this.stopInAppQRScanner();
   },
 
   async processQRInvitePayload(payloadStr) {
@@ -281,80 +552,43 @@ const ScrapApp = {
 
       let qrPayload = JSON.parse(cleanedPayload);
 
-      let isCompact = false;
-      let signedDataStr = "";
-      let publicKeyJwk = null;
-      let signature = qrPayload.s || qrPayload.signature;
-
-      if (qrPayload.d && qrPayload.s && qrPayload.p) {
-        isCompact = true;
-        signedDataStr = qrPayload.d;
-        publicKeyJwk = {
-          kty: "RSA",
-          e: "AQAB",
-          n: qrPayload.p,
-          alg: "PS256",
-          ext: true,
-          key_ops: ["verify"]
-        };
-      } else {
-        signedDataStr = qrPayload.data;
-        publicKeyJwk = qrPayload.publicKeyJwk;
+      // Extract keys from direct object or nested structures
+      const targetRoomId = qrPayload.r || qrPayload.roomId || (qrPayload.d && typeof qrPayload.d === 'object' ? qrPayload.d.r : null);
+      const targetCanvasFolderId = qrPayload.d && typeof qrPayload.d === 'string' ? qrPayload.d : (qrPayload.canvasFolderId || qrPayload.r);
+      const keyRaw = qrPayload.k || (qrPayload.roomKeyJwk ? qrPayload.roomKeyJwk.k : null);
+      const targetExpiresAt = qrPayload.x || qrPayload.expiresAt || (Date.now() + 600000);
+      let targetRoomTitle = qrPayload.t || qrPayload.roomTitle;
+      if (!targetRoomTitle || targetRoomTitle === targetRoomId) {
+        targetRoomTitle = localStorage.getItem('scrap_room_title_' + targetRoomId);
+      }
+      if ((!targetRoomTitle || targetRoomTitle === targetRoomId) && window.pb && pb.authStore.isValid && targetRoomId) {
+        try {
+          const boardRec = await pb.collection('boards').getOne(targetRoomId);
+          if (boardRec && boardRec.title && boardRec.title !== targetRoomId) {
+            targetRoomTitle = boardRec.title;
+          }
+        } catch (_) {}
+      }
+      if (!targetRoomTitle || targetRoomTitle === targetRoomId) {
+        targetRoomTitle = 'Squad Space';
       }
 
-      const pubKey = await ScrapCrypto.importJwkToKey(
-        publicKeyJwk,
-        { name: 'RSA-PSS', hash: 'SHA-256' },
-        ['verify']
-      );
-
-      const isValid = await ScrapCrypto.verifySignature(signedDataStr, signature, pubKey);
-
-      if (!isValid) {
-        await window.ScrapDialog.alert('🚨 Invalid Signature! Invitation payload tampered or invalid.');
+      if (targetExpiresAt && Date.now() > targetExpiresAt) {
+        await window.ScrapDialog.alert('🚨 Invite Expired! Invitation keys are valid for 5 minutes.');
         return;
       }
 
-      const parsedData = JSON.parse(signedDataStr);
-      let inviteData = null;
-
-      if (isCompact) {
-        const roomKeyJwk = {
-          kty: "oct",
-          k: parsedData.k,
-          alg: "A256GCM",
-          ext: true,
-          key_ops: ["encrypt", "decrypt"]
-        };
-        inviteData = {
-          roomId: parsedData.r,
-          d: parsedData.d,
-          roomKeyJwk: roomKeyJwk,
-          creatorId: parsedData.c,
-          expiresAt: parsedData.x,
-          roomTitle: parsedData.t || parsedData.r
-        };
-      } else {
-        inviteData = parsedData;
-      }
-      const targetRoomId = inviteData.roomId || inviteData.r || parsedData.r || parsedData.roomId;
-      const targetRoomTitle = inviteData.roomTitle || inviteData.t || parsedData.t || parsedData.roomTitle || targetRoomId;
-      const targetExpiresAt = inviteData.expiresAt || inviteData.x || parsedData.x || parsedData.expiresAt;
-      const targetCanvasFolderId = inviteData.d || parsedData.d;
-
-      if (Date.now() > targetExpiresAt) {
-        await window.ScrapDialog.alert('🚨 Invite Expired! Invitation keys are only valid for 5 minutes.');
-        return;
+      if (!targetRoomId || !keyRaw) {
+        throw new Error('Invalid QR code format. Missing room ID or key.');
       }
 
-      // Resolve room key JWK with fallbacks
-      const targetRoomKeyJwk = inviteData.roomKeyJwk || (parsedData.k ? {
+      const targetRoomKeyJwk = typeof keyRaw === 'string' ? {
         kty: "oct",
-        k: parsedData.k,
+        k: keyRaw,
         alg: "A256GCM",
         ext: true,
         key_ops: ["encrypt", "decrypt"]
-      } : null) || parsedData.roomKeyJwk;
+      } : keyRaw;
 
       if (!targetRoomKeyJwk) {
         throw new Error('Room encryption key is missing in invitation payload.');
@@ -613,6 +847,13 @@ const ScrapApp = {
 
       // Handle physical back button presses on Android
       window.Capacitor.Plugins.App.addListener('backButton', () => {
+        const qrScanner = document.getElementById('modal-inapp-qr-scanner');
+        if (qrScanner && !qrScanner.classList.contains('hidden')) {
+          console.log('[App] Back pressed in QR scanner: stopping camera');
+          this.stopInAppQRScanner();
+          return;
+        }
+
         const canvasScreen = document.getElementById('screen-canvas');
         const dashboardScreen = document.getElementById('screen-dashboard');
         const gatewayScreen = document.getElementById('screen-gateway');
@@ -1410,11 +1651,7 @@ const ScrapApp = {
           clearInterval(this.activeMembersPruneInterval);
           this.activeMembersPruneInterval = null;
         }
-        const emptyBanner = document.getElementById('canvas-empty-date-info-banner');
-        if (emptyBanner) emptyBanner.remove();
-
-        const photoTip = document.getElementById('canvas-photo-longpress-tip');
-        if (photoTip) photoTip.remove();
+        this.cleanUpAllTooltipsAndArrows();
       }
 
       // Trigger Robot Helper Tip when entering screen-dashboard
@@ -2554,16 +2791,19 @@ const ScrapApp = {
 
     // Invite FAB (+)
 
-    // Invite FAB (+)
     document.getElementById('btn-fab-actions').addEventListener('click', () => {
       document.getElementById('modal-invite').classList.remove('hidden');
       document.getElementById('invite-selection').classList.remove('hidden');
       document.getElementById('invite-create-mode').classList.add('hidden');
       document.getElementById('invite-join-mode').classList.add('hidden');
+      const inputInvite = document.getElementById('input-invite-payload');
+      if (inputInvite) inputInvite.value = '';
     });
 
     document.getElementById('btn-close-invite').addEventListener('click', () => {
       document.getElementById('modal-invite').classList.add('hidden');
+      const inputInvite = document.getElementById('input-invite-payload');
+      if (inputInvite) inputInvite.value = '';
       this.stopQRScanner();
       try {
         if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.DeviceLock) {
@@ -2665,35 +2905,26 @@ const ScrapApp = {
         // Build 5-minute timed compact sign-key payload
         const expiry = Date.now() + 5 * 60 * 1000;
         const canvasFolderId = await ScrapDrive.resolveRoomCanvasDataFolder(this.currentRoomId, this.currentRoomTitle);
+        // Build ultra-compact room join payload for instant low-density QR scanning
         const invitePayload = {
           r: this.currentRoomId,
           d: canvasFolderId,
           k: roomKeyJwk.k,
-          c: ScrapFirebase.userId,
-          x: expiry,
-          t: this.currentRoomTitle || this.currentRoomId
+          t: this.currentRoomTitle || localStorage.getItem('scrap_room_title_' + this.currentRoomId) || 'Squad Space',
+          x: expiry
         };
 
-        const payloadStr = JSON.stringify(invitePayload);
-        const signature = await ScrapCrypto.signData(payloadStr, ScrapRecovery.identityKeyPair.privateKey);
-
-        const qrPayload = {
-          d: payloadStr,
-          s: signature,
-          p: ScrapRecovery.vault.identityPublicKeyJwk.n
-        };
-
-        const qrString = `scrapapp://invite?payload=${encodeURIComponent(JSON.stringify(qrPayload))}`;
+        const qrString = `scrap://${encodeURIComponent(JSON.stringify(invitePayload))}`;
 
         // Clear generating text and draw a real, high-quality, local QR Code
         qrGraphic.innerHTML = '';
         new QRCode(qrGraphic, {
           text: qrString,
-          width: 170,
-          height: 170,
+          width: 240,
+          height: 240,
           colorDark: "#000000",
           colorLight: "#ffffff",
-          correctLevel: QRCode.CorrectLevel.L
+          correctLevel: QRCode.CorrectLevel.M
         });
 
         // Start Countdown
@@ -2720,26 +2951,38 @@ const ScrapApp = {
     document.getElementById('btn-trigger-scan-join').addEventListener('click', () => {
       document.getElementById('invite-selection').classList.add('hidden');
       document.getElementById('invite-join-mode').classList.remove('hidden');
+      const inputInvite = document.getElementById('input-invite-payload');
+      if (inputInvite) inputInvite.value = '';
     });
 
     const btnStartScan = document.getElementById('btn-start-qr-scan');
     if (btnStartScan) {
       btnStartScan.addEventListener('click', () => {
+        // Remove the invite dialog before opening the full-screen scanner.
+        document.getElementById('modal-invite')?.classList.add('hidden');
+        const modal = document.getElementById('modal-inapp-qr-scanner');
+        const statusText = document.getElementById('inapp-qr-status');
+        if (modal) modal.classList.remove('hidden');
+        if (statusText) statusText.innerText = 'Starting camera...';
         this.startQRScanner();
       });
     }
 
-    const btnStopScan = document.getElementById('btn-stop-qr-scan');
-    if (btnStopScan) {
-      btnStopScan.addEventListener('click', () => {
-        this.stopQRScanner();
+    const btnStopInAppScan = document.getElementById('btn-stop-inapp-qr-scan');
+    if (btnStopInAppScan) {
+      btnStopInAppScan.addEventListener('click', () => {
+        this.stopInAppQRScanner();
       });
     }
 
-    const cancelNativeBtn = document.getElementById('btn-cancel-native-scan');
-    if (cancelNativeBtn) {
-      cancelNativeBtn.addEventListener('click', () => {
-        this.stopQRScanner();
+    const qrImagePickerButton = document.getElementById('btn-qr-image-picker');
+    const qrImagePicker = document.getElementById('input-qr-image');
+    if (qrImagePickerButton && qrImagePicker) {
+      qrImagePickerButton.addEventListener('click', () => qrImagePicker.click());
+      qrImagePicker.addEventListener('change', (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (file) this.scanQRFromImageFile(file);
+        event.target.value = '';
       });
     }
 
@@ -3035,7 +3278,12 @@ const ScrapApp = {
             await window.ScrapDialog.alert('No cryptographic identity found to backup.');
             return;
           }
-          const backupData = JSON.stringify({ vault, salt });
+          const backupData = JSON.stringify({
+            roomId: this.currentRoomId || '',
+            roomTitle: this.currentRoomTitle || '',
+            vault,
+            salt
+          });
           const cleanRoomTitle = (this.currentRoomTitle || 'space').replace(/[^a-zA-Z0-9]/g, '').substring(0, 8);
           const shortTime = Date.now().toString().slice(-6);
           const filename = `sb_${cleanRoomTitle}_${shortTime}.scrapkey`;
@@ -5061,8 +5309,9 @@ const ScrapApp = {
           }
 
           try {
+            const titleToDelete = localStorage.getItem(`scrap_room_title_${roomId}`) || (this.currentRoomId === roomId ? this.currentRoomTitle : '');
             await ScrapFirebase.leaveRoom(roomId, userId);
-            await ScrapRecovery.deleteRoomKey(roomId);
+            await ScrapRecovery.deleteRoomKey(roomId, titleToDelete);
 
             if (this.activeMembersPruneInterval) {
               clearInterval(this.activeMembersPruneInterval);
@@ -5099,8 +5348,9 @@ const ScrapApp = {
           }
 
           try {
+            const titleToDelete = localStorage.getItem(`scrap_room_title_${roomId}`) || (this.currentRoomId === roomId ? this.currentRoomTitle : '');
             await ScrapFirebase.deleteRoom(roomId);
-            await ScrapRecovery.deleteRoomKey(roomId);
+            await ScrapRecovery.deleteRoomKey(roomId, titleToDelete);
 
             if (this.activeMembersPruneInterval) {
               clearInterval(this.activeMembersPruneInterval);
@@ -5982,6 +6232,7 @@ const ScrapApp = {
             uniqueRooms.push(r);
             const isOwnerOfRoom = r.createdBy === ScrapFirebase.userId;
             localStorage.setItem('scrap_room_is_owner_' + r.id, isOwnerOfRoom ? 'true' : 'false');
+            localStorage.setItem('scrap_room_title_' + r.id, r.title);
           }
         }
       });
@@ -6600,11 +6851,20 @@ const ScrapApp = {
 
   async openRoom(roomId, roomTitle) {
     this.currentRoomId = roomId;
-    this.currentRoomTitle = roomTitle;
+    let finalTitle = roomTitle;
+    if (!finalTitle || finalTitle === roomId) {
+      const cached = localStorage.getItem('scrap_room_title_' + roomId);
+      if (cached && cached !== roomId) {
+        finalTitle = cached;
+      } else {
+        finalTitle = 'Squad Space';
+      }
+    }
+    this.currentRoomTitle = finalTitle;
     localStorage.setItem('scrap_current_room_id', roomId);
-    localStorage.setItem('scrap_current_room_title', roomTitle);
-    localStorage.setItem('scrap_room_title_' + roomId, roomTitle);
-    document.getElementById('canvas-room-title').innerText = `ROOM: ${roomTitle.toUpperCase()}`;
+    localStorage.setItem('scrap_current_room_title', finalTitle);
+    localStorage.setItem('scrap_room_title_' + roomId, finalTitle);
+    document.getElementById('canvas-room-title').innerText = `ROOM: ${finalTitle.toUpperCase()}`;
 
     // Show either Leave or Delete Space button dynamically based on vault ownership
     const btnLeaveRoom = document.getElementById('btn-leave-room');
@@ -6649,17 +6909,28 @@ const ScrapApp = {
 
       if (optionIdx === 0) {
         // Manual entry
-        const enteredKey = await window.ScrapDialog.prompt('Please enter the Room Key (Base64) to unlock:', '');
+        const enteredKey = await window.ScrapDialog.prompt('Please enter the Room Key (Base64 or JSON) to unlock:', '');
         if (enteredKey) {
           try {
-            let kVal = enteredKey.trim().replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-            const keyJwk = {
-              kty: 'oct',
-              k: kVal,
-              alg: 'A256GCM',
-              ext: true,
-              key_ops: ['encrypt', 'decrypt']
-            };
+            let keyJwk = null;
+            const trimmed = enteredKey.trim();
+            if (trimmed.startsWith('{')) {
+              try {
+                const parsed = JSON.parse(trimmed);
+                if (parsed.k) keyJwk = parsed;
+                else if (parsed.roomKeyJwk) keyJwk = parsed.roomKeyJwk;
+              } catch (_) {}
+            }
+            if (!keyJwk) {
+              let kVal = trimmed.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+              keyJwk = {
+                kty: 'oct',
+                k: kVal,
+                alg: 'A256GCM',
+                ext: true,
+                key_ops: ['encrypt', 'decrypt']
+              };
+            }
             const aesKey = await ScrapCrypto.importJwkToKey(keyJwk, { name: 'AES-GCM', length: 256 }, ['encrypt', 'decrypt']);
             await ScrapRecovery.saveRoomKey(roomId, aesKey);
             key = aesKey;
@@ -6708,15 +6979,36 @@ const ScrapApp = {
             throw new Error('Invalid backup file structure.');
           }
 
-
+          // Unlocking imported vault data and merging roomKeys into current vault so no room keys are lost
           const unlocked = await ScrapRecovery.unlockIdentity('000000', backupObj.vault, backupObj.salt);
           if (unlocked) {
+            // Check if current local vault exists; merge roomKeys
             const userId = window.ScrapFirebase && ScrapFirebase.userId;
-            localStorage.setItem(`scrap_local_vault_${userId}`, backupObj.vault);
-            localStorage.setItem(`scrap_local_salt_${userId}`, backupObj.salt);
+            const existingVaultEnc = localStorage.getItem(`scrap_local_vault_${userId}`);
+            const existingSalt = localStorage.getItem(`scrap_local_salt_${userId}`);
+            
+            if (existingVaultEnc && existingSalt) {
+              try {
+                const existingSaltBuf = ScrapCrypto.base64ToArrayBuffer(existingSalt);
+                const existingKey = await ScrapCrypto.deriveKeyFromPin('000000', existingSaltBuf);
+                const existingDec = await ScrapCrypto.decryptData(ScrapCrypto.base64ToArrayBuffer(existingVaultEnc), existingKey);
+                const existingVaultObj = JSON.parse(ScrapCrypto.bufferToString(existingDec));
+
+                if (existingVaultObj && existingVaultObj.roomKeys) {
+                  ScrapRecovery.vault.roomKeys = {
+                    ...existingVaultObj.roomKeys,
+                    ...(ScrapRecovery.vault.roomKeys || {})
+                  };
+                }
+              } catch (_) {}
+            }
+
+            const pin = sessionStorage.getItem('scrap_pin_session') || '000000';
+            await ScrapRecovery.saveVaultToLocalAndDrive(pin);
+
             key = await ScrapRecovery.getRoomKey(roomId);
             if (key) {
-              await window.ScrapDialog.alert('✅ Identity and Room Keys restored successfully! Room unlocked.');
+              await window.ScrapDialog.alert('✅ Identity and Room Keys restored & merged successfully! Room unlocked.');
             } else {
               throw new Error('Identity restored but Room Key for this room is missing in this backup.');
             }

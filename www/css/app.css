@@ -45,6 +45,13 @@ body.theme-cyberpunk {
   --color-bg-end: #17072b;
 }
 
+body.barcode-scanner-active,
+body.barcode-scanner-active #app,
+body.barcode-scanner-active #modal-inapp-qr-scanner {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 body.theme-vaporwave {
   --color-bg-start: #0f051d;
   --color-bg-end: #2d0b4e;
@@ -869,6 +876,69 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   }
 }
 
+/* Focused camera surface for invite scanning */
+.scanner-modal {
+  isolation: isolate;
+  overflow: hidden;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background: #071014;
+}
+/* Keep dashboard and canvas controls out of the full-screen scanner only. */
+body:has(#modal-inapp-qr-scanner:not(.hidden)) #btn-dashboard-helper,
+body:has(#modal-inapp-qr-scanner:not(.hidden)) #btn-fab-actions,
+body:has(#modal-inapp-qr-scanner:not(.hidden)) #tool-camera,
+body.barcode-scanner-active #btn-dashboard-helper,
+body.barcode-scanner-active #btn-fab-actions,
+body.barcode-scanner-active #tool-camera {
+  display: none !important;
+}
+.scanner-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(circle at 50% 40%, rgba(0, 240, 255, 0.13), transparent 34%), linear-gradient(155deg, #071014 0%, #0b1820 55%, #101027 100%);
+}
+.scanner-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+.scanner-header, .scanner-footer, .scanner-main { width: min(100%, 460px); margin: 0 auto; }
+.scanner-header { display: grid; grid-template-columns: 72px 1fr 44px; align-items: center; gap: 14px; padding-top: 4px; }
+.scanner-icon-button { width: 44px; height: 44px; border: 1px solid rgba(255,255,255,.14); border-radius: 14px; background: rgba(255,255,255,.08); color: white; font-size: 21px; cursor: pointer; transition: .2s ease; }
+.scanner-back-button { display: inline-flex; width: 72px; align-items: center; justify-content: center; gap: 6px; font: 700 12px/1 'Space Grotesk', sans-serif; }
+.scanner-icon-button:hover { background: rgba(255,255,255,.16); border-color: rgba(0,240,255,.55); }
+.scanner-icon-button:active { transform: scale(.94); }
+.scanner-title-group { text-align: center; }
+.scanner-eyebrow { display: block; color: #59d5d0; font: 700 9px/1 'Space Grotesk', sans-serif; letter-spacing: .2em; }
+.scanner-title { margin: 6px 0 0; color: white; font: 800 21px/1.1 'Outfit', sans-serif; letter-spacing: 0; }
+.scanner-main { display: flex; flex: 1; flex-direction: column; justify-content: center; align-items: center; gap: 17px; min-height: 0; }
+.scanner-intro { display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.72); font: 600 12px/1.3 'Outfit', sans-serif; text-align: center; }
+.scanner-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #65e6c7; box-shadow: 0 0 12px #65e6c7; }
+.scanner-viewfinder { position: relative; width: min(78vw, 330px); aspect-ratio: 1; overflow: hidden; border: 1px solid rgba(255,255,255,.18); border-radius: 30px; background: #020607; box-shadow: 0 22px 70px rgba(0,0,0,.42), 0 0 0 8px rgba(255,255,255,.025); }
+.scanner-viewfinder video { opacity: .94; }
+.scanner-corner { position: absolute; width: 39px; height: 39px; border-color: #65e6c7; border-style: solid; filter: drop-shadow(0 0 7px rgba(101,230,199,.65)); }
+.scanner-corner-tl { top: 19px; left: 19px; border-width: 3px 0 0 3px; border-radius: 12px 0 0; }
+.scanner-corner-tr { top: 19px; right: 19px; border-width: 3px 3px 0 0; border-radius: 0 12px 0 0; }
+.scanner-corner-bl { bottom: 19px; left: 19px; border-width: 0 0 3px 3px; border-radius: 0 0 0 12px; }
+.scanner-corner-br { right: 19px; bottom: 19px; border-width: 0 3px 3px 0; border-radius: 0 0 12px; }
+.scanner-viewfinder .scanner-laser-line { position: absolute; left: 24px; right: 24px; height: 2px; background: #65e6c7; box-shadow: 0 0 16px #65e6c7; }
+.scanner-viewfinder-badge { position: absolute; right: 18px; bottom: 17px; left: 18px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.15); border-radius: 99px; background: rgba(3, 8, 10, .78); color: white; font: 700 10px/1 'Space Grotesk', sans-serif; letter-spacing: .04em; text-align: center; }
+.scanner-badge-icon { color: #65e6c7; font-size: 8px; }
+.scanner-hint { max-width: 300px; margin: 0; color: rgba(255,255,255,.54); font: 400 11px/1.5 'Outfit', sans-serif; text-align: center; }
+.scanner-footer { display: flex; flex-direction: column; align-items: center; gap: 13px; padding-bottom: 2px; }
+.scanner-security-note { display: flex; align-items: center; gap: 6px; color: rgba(255,255,255,.43); font: 400 10px/1 'Outfit', sans-serif; }
+.scanner-security-note span:first-child { color: #65e6c7; font-weight: 800; }
+@media (max-height: 650px) {
+  .scanner-main { gap: 10px; }
+  .scanner-viewfinder { width: min(57vh, 280px); }
+  .scanner-hint { display: none; }
+}
+
 /* Capacitor Barcode Scanner body transparent overlay when native scanning is active */
 html.barcode-scanner-active,
 body.barcode-scanner-active {
@@ -1332,27 +1402,27 @@ body.theme-light .dashboard-card-pink {
 /* Full-screen Empathy reaction sparks */
 @keyframes spark-float-drift {
   0% {
-    transform: translateY(105vh) translateX(0) scale(0.5) rotate(0deg);
+    transform: translateY(95vh) translateX(0) scale(0.5) rotate(0deg);
     opacity: 0;
   }
-  10% {
-    opacity: 0.95;
+  15% {
+    opacity: 1;
   }
-  90% {
-    opacity: 0.95;
+  80% {
+    opacity: 1;
   }
   100% {
-    transform: translateY(-10vh) translateX(var(--drift-x, 40px)) scale(1.5) rotate(var(--drift-rot, 45deg));
+    transform: translateY(40vh) translateX(var(--drift-x, 40px)) scale(1.4) rotate(var(--drift-rot, 45deg));
     opacity: 0;
   }
 }
 
 .screen-spark-particle {
   position: fixed;
-  bottom: 0;
+  top: 0;
   pointer-events: none;
   z-index: 999999 !important;
-  animation: spark-float-drift 4.5s ease-in-out forwards;
+  animation: spark-float-drift 3s ease-out forwards;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
 

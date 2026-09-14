@@ -23,6 +23,7 @@
 -keepattributes SourceFile,LineNumberTable
 -keepattributes Signature
 -keepattributes Exceptions
+-keepattributes EnclosingMethod,InnerClasses
 
 # ---- Firebase / Google Services / MLKit ----
 -dontwarn com.google.firebase.**

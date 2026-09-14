@@ -3,7 +3,8 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self' data: blob: gap: https://api.myscrapmemories.com https://4d6b71a94148fa81bf2f974ffa012d16.r2.cloudflarestorage.com 'unsafe-eval' 'unsafe-inline'; 
                  connect-src 'self' blob: data: https://api.myscrapmemories.com https://4d6b71a94148fa81bf2f974ffa012d16.r2.cloudflarestorage.com;
@@ -457,7 +458,8 @@
     </div>
 
     <!-- Bottom Input Toolbar (Capsule Style) -->
-    <div id="canvas-bottom-bar" class="canvas-hud-bottom absolute left-4 right-4 z-40 flex justify-center pointer-events-none">
+    <div id="canvas-bottom-bar"
+      class="canvas-hud-bottom absolute left-4 right-4 z-40 flex justify-center pointer-events-none">
       <div
         class="bottom-input-bar px-4 py-2 flex items-center justify-start sm:justify-center gap-2.5 sm:gap-5 shadow-2xl pointer-events-auto">
         <!-- Green Camera snaper -->
@@ -1117,7 +1119,7 @@
         </h3>
 
         <div
-          class="w-48 h-48 bg-white p-3 rounded-xl border border-gray-200 flex flex-col items-center justify-center relative shadow-lg">
+          class="w-64 h-64 bg-white p-3 rounded-2xl border border-gray-200 flex flex-col items-center justify-center relative shadow-2xl">
           <div id="qr-code-graphic"
             class="w-full h-full bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center text-[9px] text-black font-mono text-center p-2 font-bold break-all">
             [Cryptographic QR Payload Signature Loading...]
@@ -1140,8 +1142,27 @@
         <h3 class="font-space text-xs font-bold text-[#39ff14] text-center uppercase tracking-wider">JOIN ROOM GATEWAY
         </h3>
 
-        <div class="bg-black/60 p-3 rounded-2xl border border-white/5">
+        <!-- Direct In-App QR Scanner Button  -->
+        <button id="btn-start-qr-scan"
+          class="btn-capsule w-full py-3.5 flex items-center justify-center gap-2 shadow-xl transition-all transform active:scale-95 hover:brightness-110"
+          style="background: linear-gradient(135deg, #7c3aed 0%, #db2777 50%, #2563eb 100%) !important; color: #ffffff !important; border: 1px solid rgba(255,255,255,0.3) !important; font-weight: bold !important;">
+          <svg class="hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z">
+            </path>
+          </svg>
+          <span class="font-space text-xs tracking-wider uppercase font-bold">SCAN QR CODE DIRECTLY</span>
+        </button>
+        <p class="text-[10px] text-gray-500 font-space text-center -mt-2">Instant in-app camera scanner</p>
 
+        <div class="flex items-center my-1">
+          <div class="flex-grow border-t border-gray-300/40"></div>
+          <span class="px-3 text-[10px] font-space text-gray-400 uppercase tracking-widest font-bold">OR PASTE
+            TOKEN</span>
+          <div class="flex-grow border-t border-gray-300/40"></div>
+        </div>
+
+        <div class="bg-black/60 p-3 rounded-2xl border border-white/5">
           <textarea id="input-invite-payload" rows="3"
             placeholder="Paste the encrypted invite QR code token payload here..."
             class="w-full bg-transparent text-[#39ff14] p-2 border-0 rounded font-mono text-xs focus:outline-none"></textarea>
@@ -1151,6 +1172,60 @@
         </button>
       </div>
     </div>
+  </div>
+
+  <!-- ==============================================
+       MODAL: CUSTOM IN-APP CAMERA QR SCANNER
+       ============================================== -->
+  <div id="modal-inapp-qr-scanner"
+    class="hidden scanner-modal fixed inset-0 z-[100] flex flex-col text-white">
+    <div class="scanner-backdrop" aria-hidden="true"></div>
+
+    <!-- Header -->
+    <header class="scanner-header">
+      <button id="btn-stop-inapp-qr-scan" class="scanner-icon-button scanner-back-button" type="button" aria-label="Go back and close QR scanner">
+        <span aria-hidden="true">&#8592;</span>
+        <span>Back</span>
+      </button>
+      <div class="scanner-title-group">
+        <span class="scanner-eyebrow">SECURE CONNECTION</span>
+        <h3 class="scanner-title">Scan an invite</h3>
+      </div>
+      <span aria-hidden="true"></span>
+    </header>
+
+    <main class="scanner-main">
+      <div class="scanner-intro">
+        <span class="scanner-live-dot" aria-hidden="true"></span>
+        <span>Point your camera at a Mitrava invite</span>
+      </div>
+
+      <!-- Camera Viewfinder -->
+      <div class="scanner-viewfinder">
+      <video id="inapp-qr-video" class="w-full h-full object-cover" playsinline autoplay muted></video>
+      <canvas id="inapp-qr-canvas" class="hidden"></canvas>
+
+        <div class="scanner-corner scanner-corner-tl"></div>
+        <div class="scanner-corner scanner-corner-tr"></div>
+        <div class="scanner-corner scanner-corner-bl"></div>
+        <div class="scanner-corner scanner-corner-br"></div>
+        <div class="scanner-laser-line" aria-hidden="true"></div>
+        <div class="scanner-viewfinder-badge">
+          <span class="scanner-badge-icon" aria-hidden="true">&#9632;</span>
+          <span id="inapp-qr-status" role="status" aria-live="polite">Finding camera...</span>
+        </div>
+      </div>
+
+      <p class="scanner-hint">Keep the entire code inside the frame. Your invite is verified on-device before you join.</p>
+    </main>
+
+    <!-- Bottom Action Controls -->
+    <footer class="scanner-footer">
+      <div class="scanner-security-note">
+        <span aria-hidden="true">&#10003;</span>
+        <span>End-to-end encrypted invite</span>
+      </div>
+    </footer>
   </div>
 
 

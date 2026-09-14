@@ -828,16 +828,16 @@ const ScrapCanvas = {
   },
 
   spawnFullScreenSparks(emoji) {
-    const count = 15;
+    const count = 35;
     for (let i = 0; i < count; i++) {
       const p = document.createElement('span');
       p.className = 'screen-spark-particle';
       p.innerText = emoji;
 
-      const size = Math.floor(Math.random() * 12) + 24; // Generates sizes between 24px and 36px
+      const size = Math.floor(Math.random() * 14) + 24; // Generates sizes between 24px and 38px
       const left = Math.floor(Math.random() * 100);
-      const delay = Math.random() * 1.5;
-      const duration = 3.5 + Math.random() * 1.5;
+      const delay = Math.random() * 1.2;
+      const duration = 2.2 + Math.random() * 1.2;
       const driftX = Math.floor(Math.random() * 120) - 60;
       const driftRot = Math.floor(Math.random() * 90) - 45;
 
@@ -1023,6 +1023,13 @@ const ScrapCanvas = {
       return;
     }
 
+    const qrModal = document.getElementById('modal-inapp-qr-scanner');
+    if (qrModal && !qrModal.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
     if ((window.ScrapTour && typeof ScrapTour.isActive === 'function' && ScrapTour.isActive()) || window.isUpdateModalActive || document.getElementById('mitrava-update-modal')) {
       if (existing) existing.remove();
       if (existingSvg) existingSvg.remove();
@@ -1121,6 +1128,11 @@ const ScrapCanvas = {
           banner.remove();
           const curSvg = document.getElementById(svgId);
           if (curSvg) curSvg.remove();
+          setTimeout(() => {
+            if (typeof this.checkFirstPhotoTip === 'function') {
+              this.checkFirstPhotoTip(this.elements);
+            }
+          }, 120);
         };
 
         const gotItBtn = document.getElementById(`${bannerId}-gotit`);
@@ -1155,7 +1167,7 @@ const ScrapCanvas = {
       return;
     }
 
-    const elementsMap = map || this.elements || {};
+    const elementsMap = (map && Object.keys(map).length > 0) ? map : (this.elements || {});
     const photos = Object.entries(elementsMap).filter(
       ([id, el]) => el && (el.type === 'photo' || el.type === 'image')
     );
@@ -1177,10 +1189,16 @@ const ScrapCanvas = {
       return;
     }
 
-    const [firstPhotoId] = photos[0];
-
     const showTipForPhoto = (attempts = 0) => {
-      const photoDom = document.getElementById(`item_${firstPhotoId}`);
+      let photoDom = null;
+      for (const [id] of photos) {
+        const dom = document.getElementById(`item_${id}`);
+        if (dom && dom.offsetWidth > 0 && dom.offsetHeight > 0) {
+          photoDom = dom;
+          break;
+        }
+      }
+
       if (!photoDom) {
         if (attempts < 25) setTimeout(() => showTipForPhoto(attempts + 1), 120);
         return;
@@ -2344,6 +2362,10 @@ const ScrapCanvas = {
     if (this.doodleSparkleIntervals[id]) return;
 
     this.doodleSparkleIntervals[id] = setInterval(() => {
+      if (!domEl || !document.body.contains(domEl)) {
+        this.stopDoodleSparkleLoop(id);
+        return;
+      }
       const canvas = domEl.querySelector('canvas');
       if (!canvas) return;
 
@@ -3858,6 +3880,7 @@ const ScrapCanvas = {
         e.preventDefault();
         const emoji = el.getAttribute('data-emoji');
         this.spawnEmojiBurstOnBubble(emoji);
+        this.spawnFullScreenSparks(emoji);
         picker.remove();
 
         // Sync spark alert dynamically over PocketBase
