@@ -9,7 +9,7 @@
  */
 
 // Set to true to disable console logs in production/release mode
-const DISABLE_LOGS = true;
+const DISABLE_LOGS = false;
 if (DISABLE_LOGS) {
   console.log = function () { };
   console.debug = function () { };
@@ -188,7 +188,7 @@ const ScrapApp = {
       this.inAppAnimationFrame = null;
     }
     if (this.inAppVideoTrack) {
-      try { this.inAppVideoTrack.stop(); } catch (e) {}
+      try { this.inAppVideoTrack.stop(); } catch (e) { }
       this.inAppVideoTrack = null;
     }
 
@@ -294,7 +294,7 @@ const ScrapApp = {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     let detector = null;
     if ('BarcodeDetector' in window) {
-      try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {}
+      try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { }
     }
 
     const MAX_SCAN_DIM = 960; // High resolution scanning
@@ -319,7 +319,7 @@ const ScrapApp = {
             if (barcodes && barcodes.length > 0) {
               if (barcodes[0].rawValue) decodedText = barcodes[0].rawValue;
             }
-          } catch (e) {}
+          } catch (e) { }
         }
 
         // 2. Optimized jsQR Scan Pass (Scaled to 640px max dimension for fast high-contrast decoding)
@@ -340,7 +340,7 @@ const ScrapApp = {
             const imageData = ctx.getImageData(0, 0, w, h);
             const code = window.jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
             if (code && code.data) decodedText = code.data;
-          } catch (e) {}
+          } catch (e) { }
 
           // Pass 2: Center Crop (1.8x Zoom)
           if (!decodedText) {
@@ -352,7 +352,7 @@ const ScrapApp = {
               const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
               const code = window.jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
               if (code && code.data) decodedText = code.data;
-            } catch (e) {}
+            } catch (e) { }
           }
 
           // Pass 3: Tight Center Crop (3.0x Zoom)
@@ -365,7 +365,7 @@ const ScrapApp = {
               const cropData = ctx.getImageData(cropX, cropY, cropW, cropH);
               const code = window.jsQR(cropData.data, cropW, cropH, { inversionAttempts: 'attemptBoth' });
               if (code && code.data) decodedText = code.data;
-            } catch (e) {}
+            } catch (e) { }
           }
         }
 
@@ -379,12 +379,12 @@ const ScrapApp = {
             this.inAppAnimationFrame = null;
           }
           if (this.inAppVideoTrack) {
-            try { this.inAppVideoTrack.stop(); } catch(e){}
+            try { this.inAppVideoTrack.stop(); } catch (e) { }
             this.inAppVideoTrack = null;
           }
 
           // 2. Pause video preview so current frame freezes on user screen immediately
-          try { video.pause(); } catch(e){}
+          try { video.pause(); } catch (e) { }
 
           // 3. Visual feedback: update badge to show captured status
           if (statusText) {
@@ -567,7 +567,7 @@ const ScrapApp = {
           if (boardRec && boardRec.title && boardRec.title !== targetRoomId) {
             targetRoomTitle = boardRec.title;
           }
-        } catch (_) {}
+        } catch (_) { }
       }
       if (!targetRoomTitle || targetRoomTitle === targetRoomId) {
         targetRoomTitle = 'Squad Space';
@@ -1622,6 +1622,12 @@ const ScrapApp = {
     if (target) {
       target.classList.remove('hidden');
       this.activeScreen = screenId;
+
+      if (screenId !== 'screen-canvas') {
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.resetCollageFlowToolbar === 'function') {
+          window.ScrapCanvas.resetCollageFlowToolbar();
+        }
+      }
 
       if (screenId === 'screen-gateway') {
         this.updateGatewayVisuals();
@@ -3203,8 +3209,6 @@ const ScrapApp = {
         const workspace = canvas.workspaceEl;
 
         // DOM-based approach: find all rendered element nodes that match the current date.
-        // This is immune to zoom/coordinate system mismatches because it reads actual
-        // screen positions via getBoundingClientRect() rather than stored board coordinates.
         const allItems = Array.from(document.querySelectorAll('[id^="item_"]'));
         const currentDate = canvas.currentDate;
 
@@ -3262,6 +3266,84 @@ const ScrapApp = {
       };
 
       btnRecenter.addEventListener('click', handleRecenter);
+    }
+
+    // Helper for Collage Flow: auto-scroll to the nearest visible (filtered-active) photo after chip click
+    this.recenterCanvasToActiveElements = () => {
+      const canvas = window.ScrapCanvas;
+      if (!canvas || !canvas.workspaceEl) return;
+      const workspace = canvas.workspaceEl;
+
+      // Find elements that passed the collage filter
+      let targetItems = Array.from(document.querySelectorAll('[id^="item_"].element-filtered-active'));
+
+      // Prefer photos
+      const photoItems = targetItems.filter(domEl => {
+        const id = domEl.id.replace('item_', '');
+        const data = (canvas.elements || {})[id];
+        return data && (data.type === 'photo' || data.type === 'container');
+      });
+      if (photoItems.length > 0) targetItems = photoItems;
+
+      if (targetItems.length === 0) {
+        // No active items — fall back to board center
+        const boardMargin = 3000;
+        workspace.scrollLeft = boardMargin + 2500 - workspace.clientWidth / 2;
+        workspace.scrollTop = boardMargin + 2500 - workspace.clientHeight / 2;
+        return;
+      }
+
+      // Scroll to the topmost visible element (same approach as the recenter button)
+      targetItems.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      const focusEl = targetItems[0];
+      const rect = focusEl.getBoundingClientRect();
+      const workspaceRect = workspace.getBoundingClientRect();
+      const elCenterX = rect.left + rect.width / 2;
+      const elCenterY = rect.top + rect.height / 2;
+      const wsCenterX = workspaceRect.left + workspaceRect.width / 2;
+      const wsCenterY = workspaceRect.top + workspaceRect.height / 2;
+      const dx = elCenterX - wsCenterX;
+      const dy = elCenterY - wsCenterY;
+      console.log('[CollageFlow Recenter] delta:', dx, dy, 'items:', targetItems.length);
+      workspace.scrollLeft += dx;
+      workspace.scrollTop += dy;
+    };
+
+
+    // Toggle Collage Flow Filter Bar Action Button
+    const btnToggleCollageFlow = document.getElementById('btn-toggle-collage-flow');
+    if (btnToggleCollageFlow) {
+      btnToggleCollageFlow.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const bar = document.getElementById('collage-flow-filter-bar');
+        if (bar) {
+          bar.classList.toggle('hidden');
+          if (window.ScrapCanvas && typeof window.ScrapCanvas.updateDatePickerVisibility === 'function') {
+            window.ScrapCanvas.updateDatePickerVisibility();
+          }
+          const isOpening = !bar.classList.contains('hidden');
+          if (isOpening) {
+            // Unselect all filter chips so board starts completely empty
+            const chips = bar.querySelectorAll('.collage-flow-chip');
+            chips.forEach(c => c.classList.remove('active'));
+            const yearSelect = document.getElementById('collage-flow-year-select');
+            if (yearSelect) {
+              if (window.ScrapCanvas && typeof window.ScrapCanvas.populateCollageFlowYears === 'function') {
+                window.ScrapCanvas.populateCollageFlowYears(yearSelect);
+              }
+              yearSelect.value = '';
+            }
+            if (window.ScrapCanvas && typeof window.ScrapCanvas.setCollageFlowFilter === 'function') {
+              window.ScrapCanvas.setCollageFlowFilter('none');
+            }
+          } else {
+            if (window.ScrapCanvas && typeof window.ScrapCanvas.resetCollageFlowToolbar === 'function') {
+              window.ScrapCanvas.resetCollageFlowToolbar();
+            }
+          }
+        }
+      });
     }
 
     // Export Cryptographic Backup Action Button
@@ -5259,8 +5341,25 @@ const ScrapApp = {
         this.currentDate = e.target.value;
         ScrapCanvas.currentDate = this.currentDate;
         ScrapCanvas.hasCenteredInitially = false;
-        // Re-render canvas elements instantly for the new date
-        ScrapCanvas.renderElements(ScrapCanvas.elements);
+        const collageFlowBar = document.getElementById('collage-flow-filter-bar');
+        const isCollageFlowActive = collageFlowBar && !collageFlowBar.classList.contains('hidden');
+        if (isCollageFlowActive) {
+          ScrapCanvas.setCollageFlowFilter(`date:${this.currentDate}`);
+        } else {
+          // Re-render canvas elements instantly for the new date
+          ScrapCanvas.renderElements(ScrapCanvas.elements);
+        }
+      });
+    }
+
+    // Auto-hide Collage Flow toolbar when top left HUD or options menu buttons are clicked
+    const topLeftHud = document.querySelector('.canvas-hud-top-left');
+    if (topLeftHud) {
+      topLeftHud.addEventListener('click', (e) => {
+        if (e.target.closest && e.target.closest('#btn-toggle-collage-flow')) return;
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.resetCollageFlowToolbar === 'function') {
+          window.ScrapCanvas.resetCollageFlowToolbar();
+        }
       });
     }
 
@@ -5283,12 +5382,20 @@ const ScrapApp = {
           btnHudToggle.innerText = '✕';
           btnHudToggle.classList.add('border-cyber-green', 'text-cyber-green');
         }
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.updateDatePickerVisibility === 'function') {
+          window.ScrapCanvas.updateDatePickerVisibility();
+        }
       });
 
       // Auto-close menu whenever any option item inside the gear menu is clicked
       hudMenu.querySelectorAll('button').forEach(btn => {
         btn.addEventListener('click', () => {
           closeHudMenu();
+          if (btn.id !== 'btn-toggle-collage-flow') {
+            if (window.ScrapCanvas && typeof window.ScrapCanvas.resetCollageFlowToolbar === 'function') {
+              window.ScrapCanvas.resetCollageFlowToolbar();
+            }
+          }
         });
       });
     }
@@ -6849,8 +6956,11 @@ const ScrapApp = {
     });
   },
 
-  async openRoom(roomId, roomTitle) {
+  async openRoom(roomId, roomTitle, isGroup) {
     this.currentRoomId = roomId;
+    if (typeof isGroup === 'boolean') {
+      localStorage.setItem('scrap_room_is_group_' + roomId, String(isGroup));
+    }
     let finalTitle = roomTitle;
     if (!finalTitle || finalTitle === roomId) {
       const cached = localStorage.getItem('scrap_room_title_' + roomId);
@@ -6919,7 +7029,7 @@ const ScrapApp = {
                 const parsed = JSON.parse(trimmed);
                 if (parsed.k) keyJwk = parsed;
                 else if (parsed.roomKeyJwk) keyJwk = parsed.roomKeyJwk;
-              } catch (_) {}
+              } catch (_) { }
             }
             if (!keyJwk) {
               let kVal = trimmed.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -6986,7 +7096,7 @@ const ScrapApp = {
             const userId = window.ScrapFirebase && ScrapFirebase.userId;
             const existingVaultEnc = localStorage.getItem(`scrap_local_vault_${userId}`);
             const existingSalt = localStorage.getItem(`scrap_local_salt_${userId}`);
-            
+
             if (existingVaultEnc && existingSalt) {
               try {
                 const existingSaltBuf = ScrapCrypto.base64ToArrayBuffer(existingSalt);
@@ -7000,7 +7110,7 @@ const ScrapApp = {
                     ...(ScrapRecovery.vault.roomKeys || {})
                   };
                 }
-              } catch (_) {}
+              } catch (_) { }
             }
 
             const pin = sessionStorage.getItem('scrap_pin_session') || '000000';
@@ -7309,19 +7419,8 @@ const ScrapApp = {
   },
 
   displayAlertToast(alert) {
-    const text = document.getElementById('notification-text');
-    const toast = document.getElementById('system-notification');
-
-    let emoji = '🚨';
-    if (alert.type === 'screenshot') emoji = '📸';
-    if (alert.type === 'export') emoji = '✨';
-
-    text.innerText = `${emoji} ${alert.userName} ${alert.detail}`;
-    toast.classList.remove('hidden');
-
-    setTimeout(() => {
-      toast.classList.add('hidden');
-    }, 5000);
+    // In-app banner disabled per user preference — notifications rely strictly on native system Push Notifications
+    return;
   },
 
   // Simulated Screenshot triggers

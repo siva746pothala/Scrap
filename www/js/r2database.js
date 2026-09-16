@@ -153,14 +153,6 @@ const ScrapDrive = {
       throw new Error('R2 Uploader not initialized');
     }
 
-    if (window.ScrapFirebase) {
-      if (!window.ScrapFirebase.mediaCacheRAM) {
-        window.ScrapFirebase.mediaCacheRAM = {};
-      }
-      const blob = new Blob([arrayBuffer], { type: mimeType });
-      window.ScrapFirebase.mediaCacheRAM[prefixedFileName] = blob;
-    }
-
     // Also save to disk cache immediately
     await this.writeLocalCacheFile(prefixedFileName, arrayBuffer);
 
@@ -177,19 +169,14 @@ const ScrapDrive = {
   async downloadFile(fileId) {
     console.log('[LocalDrive] Downloading file from Cloudflare R2:', fileId);
 
-    // 1. Check RAM buffer
-    if (window.ScrapFirebase && window.ScrapFirebase.mediaCacheRAM && window.ScrapFirebase.mediaCacheRAM[fileId]) {
-      return await window.ScrapFirebase.mediaCacheRAM[fileId].arrayBuffer();
-    }
-
-    // 2. Check persistent disk cache (14-day limit)
+    // Use persistent disk cache (14-day limit); do not retain media in a RAM cache.
     const cachedBuffer = await this.readLocalCacheFile(fileId);
     if (cachedBuffer) {
       console.log('[LocalDrive] Loaded from persistent disk cache:', fileId);
       return cachedBuffer;
     }
 
-    // 3. Fallback: Download from Cloudflare R2 directly
+    // Download from Cloudflare R2 only when the encrypted file is not on disk.
     if (window.ScrapR2) {
       const arrayBuffer = await window.ScrapR2.download(fileId);
       // Save to persistent disk cache

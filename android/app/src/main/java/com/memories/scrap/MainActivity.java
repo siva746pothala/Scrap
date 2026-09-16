@@ -21,6 +21,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AppUpdatePlugin.class);
         super.onCreate(savedInstanceState);
 
+        // Bind physical volume buttons directly to Media/Music volume stream
+        setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
+
         // Override BridgeActivity's edge-to-edge to keep status bar visible
         WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
 

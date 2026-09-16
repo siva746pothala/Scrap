@@ -2098,3 +2098,114 @@ input, textarea, [contenteditable] {
 .bottom-safe {
   bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
 }
+
+/* Collage Flow Time Filter Floating Bar */
+#collage-flow-filter-bar {
+  top: calc(72px + env(safe-area-inset-top, 0px));
+  left: 16px;
+  touch-action: pan-x !important;
+  user-select: none !important;
+  cursor: grab;
+  overflow-x: auto !important;
+  max-width: calc(100vw - 32px) !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+/* The story reel is a self-contained full-screen view. */
+body.story-reel-active #canvas-workspace,
+body.story-reel-active .canvas-hud-top-left,
+body.story-reel-active #canvas-bottom-bar,
+body.story-reel-active #collage-flow-filter-bar,
+body.story-reel-active > #screen-canvas > .ambient-purple-glow {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.story-reel-active #screen-canvas > *:not(#story-reel-modal) {
+  display: none !important;
+}
+
+body.story-reel-active #screen-canvas > #story-reel-modal {
+  display: flex !important;
+}
+
+#story-reel-modal > .w-full.items-center.justify-between {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+.collage-flow-chip {
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  flex-shrink: 0;
+}
+
+.collage-flow-chip:hover {
+  border-color: #39ff14;
+  color: #39ff14;
+  background-color: rgba(57, 255, 20, 0.1);
+}
+
+.collage-flow-chip.active {
+  background-color: #39ff14 !important;
+  color: #000000 !important;
+  border-color: #39ff14 !important;
+  box-shadow: 0 0 10px rgba(57, 255, 20, 0.5);
+}
+
+.element-filtered-dimmed {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+/* In Collage Flow Mode, hide all background canvas elements so photos ONLY show 1-by-1 in Full-Screen Story Reel */
+body.collage-flow-mode-active #canvas-elements-container [id^="item_"] {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.collage-flow-mode-active #canvas-workspace {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.element-filtered-active {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.collage-flow-filter-label {
+  color: #39ff14 !important;
+  font-weight: 700 !important;
+  text-shadow: 0 0 6px rgba(57, 255, 20, 0.5);
+}
+
+#collage-flow-year-select {
+  background-color: #0c051a !important;
+  color: #39ff14 !important;
+  border: 1px solid #39ff14 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 0 8px rgba(57, 255, 20, 0.35) !important;
+}
+
+#collage-flow-year-select option {
+  background-color: #0c051a !important;
+  color: #39ff14 !important;
+  font-weight: 700 !important;
+  padding: 6px 10px !important;
+}

@@ -40,6 +40,26 @@ const ScrapFirebase = {
       : 'Squadmate';
   },
 
+  getMemberDisplayName(userId, fallbackEl) {
+    const roomTitle = window.ScrapApp?.currentRoomTitle;
+    if (fallbackEl && fallbackEl.ownerName && fallbackEl.ownerName !== 'Squadmate' && fallbackEl.ownerName !== 'Creator' && fallbackEl.ownerName !== 'Unknown' && fallbackEl.ownerName !== roomTitle) {
+      return fallbackEl.ownerName;
+    }
+    if (fallbackEl && fallbackEl.userName && fallbackEl.userName !== 'Squadmate' && fallbackEl.userName !== 'Creator' && fallbackEl.userName !== 'Unknown' && fallbackEl.userName !== roomTitle) {
+      return fallbackEl.userName;
+    }
+    if (window.ScrapCanvas && Array.isArray(window.ScrapCanvas.joinedMembers)) {
+      const member = window.ScrapCanvas.joinedMembers.find(m => m.id === userId);
+      if (member && member.name && member.name !== 'Squadmate' && member.name !== 'Creator' && member.name !== roomTitle) {
+        return member.name;
+      }
+    }
+    const storedName = localStorage.getItem('scrap_user_display_name');
+    if (storedName && storedName.trim() && storedName.trim() !== roomTitle) return storedName.trim();
+    if (this.userName && this.userName !== 'Squadmate' && this.userName !== roomTitle) return this.userName;
+    return 'Squadmate';
+  },
+
   setRoom(roomId) {
     this.roomId = String(roomId || '');
     this.currentBoardRecordId = this.roomId;
@@ -59,12 +79,16 @@ const ScrapFirebase = {
   },
 
   async saveElement(roomId, elementId, data) {
+    if (!this.knownElementIds) this.knownElementIds = new Set();
+    this.knownElementIds.add(elementId);
+    const existing = this.elements[elementId];
     const payload = {
       ...data,
       id: elementId,
+      createdAt: (existing && existing.createdAt) || data.createdAt || Date.now(),
       updatedAt: Date.now(),
       ownerId: this.userId,
-      ownerName: this.userName
+      ownerName: this.getMemberDisplayName(this.userId, data)
     };
 
     this.elements[elementId] = payload;
@@ -92,12 +116,14 @@ const ScrapFirebase = {
         delete this.elements[key];
         changed = true;
       } else {
+        const existing = this.elements[key];
         this.elements[key] = {
           ...val,
           id: key,
+          createdAt: (existing && existing.createdAt) || (val && val.createdAt) || Date.now(),
           updatedAt: Date.now(),
           ownerId: this.userId,
-          ownerName: this.userName
+          ownerName: this.getMemberDisplayName(this.userId, val)
         };
         localStorage.removeItem(`scrap_elements_cache_${roomId}`);
         changed = true;
@@ -209,6 +235,7 @@ const ScrapFirebase = {
     this.elements = {};
     this.connections = {};
     this.localMediaFiles = {};
+    this.mediaCacheRAM = {};
     try {
       window.pb.collection('boards').unsubscribe('*');
       window.pb.collection('presence').unsubscribe('*');
@@ -305,6 +332,7 @@ const ScrapFirebase = {
 
         // Use record.members (which is always present) to list joined members
         const rawMembers = record.members || [];
+        this.isGroupVault = rawMembers.length > 0;
         rawMembers.forEach(mid => {
           if (owner && mid === owner.id) return;
           if (mid === record.user) return;
@@ -328,8 +356,10 @@ const ScrapFirebase = {
         this.connections = state.connections || {};
       }
 
+      this.knownElementIds = new Set(Object.keys(this.elements));
       this.saveLocalRoomData(this.roomId, 'elements', this.elements);
       this.saveLocalRoomData(this.roomId, 'connections', this.connections);
+      this.isInitialLoadDone = true;
 
       if (this.onElementsUpdateCallback) this.onElementsUpdateCallback(this.elements);
       if (this.onConnectionsUpdateCallback) this.onConnectionsUpdateCallback(this.connections);
@@ -360,6 +390,7 @@ const ScrapFirebase = {
   async subscribeToRoom(roomId, onElementsUpdate, onPresenceUpdate, onAlertTriggered, onConnectionsUpdate) {
     const subscriptionToken = (this.roomSubscriptionToken || 0) + 1;
     this.roomSubscriptionToken = subscriptionToken;
+    this.isInitialLoadDone = false;
     this.setRoom(roomId);
 
     this.onElementsUpdateCallback = onElementsUpdate;
@@ -369,6 +400,7 @@ const ScrapFirebase = {
 
     this.elements = this.getLocalRoomData(roomId, 'elements') || {};
     this.connections = this.getLocalRoomData(roomId, 'connections') || {};
+    this.knownElementIds = new Set(Object.keys(this.elements));
 
     if (onElementsUpdate) onElementsUpdate(this.elements);
     if (onConnectionsUpdate) onConnectionsUpdate(this.connections);
@@ -424,6 +456,7 @@ const ScrapFirebase = {
 
                 // Use record.members (which is always present) to list joined members
                 const rawMembers = record.members || [];
+                this.isGroupVault = rawMembers.length > 0;
                 rawMembers.forEach(mid => {
                   if (owner && mid === owner.id) return;
                   if (mid === record.user) return;
@@ -501,15 +534,55 @@ const ScrapFirebase = {
             }
           }
 
+          // Determine if current room is a Solo Vault
+          const storedIsGroup = localStorage.getItem('scrap_room_is_group_' + this.roomId);
+          const isSoloVault = storedIsGroup === 'false' ||
+                              (this.isGroupVault === false) ||
+                              this.roomId === this.userId ||
+                              this.roomId.startsWith('solo_') ||
+                              this.roomId.includes('_solo') ||
+                              (window.ScrapCanvas && Array.isArray(window.ScrapCanvas.joinedMembers) && window.ScrapCanvas.joinedMembers.length <= 1);
+
           // Merge elements based on updatedAt timestamp
           let changed = false;
           for (const [id, serverEl] of Object.entries(serverElements)) {
+            const isBrandNewElement = !this.knownElementIds.has(id);
+            this.knownElementIds.add(id);
+
             const localEl = this.elements[id];
 
             // Prevent overwriting elements that were recently edited/dragged locally
             const lastEdit = (window.ScrapCanvas && window.ScrapCanvas.lastLocalEditTimes && window.ScrapCanvas.lastLocalEditTimes[id]) || 0;
             if (Date.now() - lastEdit < 10000 && localEl) {
               continue;
+            }
+
+            // Trigger notification alert ONLY when a BRAND NEW element is created in a GROUP vault by a squadmate
+            const createdAtMs = serverEl.createdAt ? (typeof serverEl.createdAt === 'number' ? serverEl.createdAt : new Date(serverEl.createdAt).getTime()) : 0;
+            const isNewlyCreated = createdAtMs > 0 && (Date.now() - createdAtMs) < 30000 && (Date.now() - createdAtMs) >= 0;
+
+            if (isBrandNewElement && !isSoloVault && this.isInitialLoadDone && serverEl && serverEl.ownerId && serverEl.ownerId !== this.userId && !id.startsWith('recovery_') && isNewlyCreated) {
+              const authorName = this.getMemberDisplayName(serverEl.ownerId, serverEl);
+              let label = 'added a new item to the group board! ✨';
+              if (serverEl.type === 'photo') label = 'added a new photo 📷';
+              else if (serverEl.type === 'text') label = 'added a text sticker 📝';
+              else if (serverEl.type === 'sticker') label = 'added a graphic sticker 🎨';
+              else if (serverEl.type === 'doodle') label = 'added a doodle drawing ✏️';
+              else if (serverEl.type === 'voice') label = 'shared a voice note 🎙️';
+              else if (serverEl.type === 'music') label = 'shared a music track 🎵';
+              else if (serverEl.type === 'video') label = 'shared a video note 🎬';
+
+              if (window.ScrapNotifications && typeof window.ScrapNotifications.triggerGroupPushNotification === 'function') {
+                window.ScrapNotifications.triggerGroupPushNotification(authorName, label, this.roomId);
+              } else if (this.onAlertTriggeredCallback) {
+                this.onAlertTriggeredCallback({
+                  userId: serverEl.ownerId,
+                  userName: authorName,
+                  type: 'new_element',
+                  detail: label,
+                  timestamp: Date.now()
+                });
+              }
             }
 
             if (!localEl || !localEl.updatedAt || !serverEl.updatedAt || serverEl.updatedAt > localEl.updatedAt) {

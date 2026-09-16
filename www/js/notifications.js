@@ -60,13 +60,25 @@ const ScrapNotifications = {
       // 5. Handle receiving notifications when the app is in the foreground
       PushNotifications.addListener('pushNotificationReceived', (notification) => {
         console.log('[Push] Notification received in foreground:', notification);
-        // Custom visual cue or alert if needed when in foreground
+        if (notification && notification.data) {
+          const type = notification.data.type || 'new_element';
+          if (type === 'new_element' || (type && type.includes('new'))) {
+            const userName = notification.data.userName || notification.data.senderName || notification.title || 'Squadmate';
+            const body = notification.body || notification.data.detail || 'added a new item to the board!';
+            if (window.ScrapApp && typeof window.ScrapApp.displayAlertToast === 'function') {
+              window.ScrapApp.displayAlertToast({
+                type: 'new_element',
+                userName: userName,
+                detail: body
+              });
+            }
+          }
+        }
       });
 
       // 6. Handle action performed (user tapped the notification)
       PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
         console.log('[Push] Action performed:', action);
-        // You can use action.notification.data to route the user to the correct board!
         if (action.notification && action.notification.data && action.notification.data.roomId) {
           const roomId = action.notification.data.roomId;
           console.log('[Push] Navigating directly to room:', roomId);
@@ -80,6 +92,37 @@ const ScrapNotifications = {
 
     } catch (err) {
       console.error('[Push] Initialization error:', err);
+    }
+  },
+
+  async triggerGroupPushNotification(userName, detail, roomId) {
+    const title = `Scrap Squad: ${userName}`;
+    const body = detail || 'added a new item to the group board! ✨';
+
+    // 1. Send native push / local notification if available
+    const LocalNotifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    if (LocalNotifications) {
+      try {
+        await LocalNotifications.requestPermissions();
+        await LocalNotifications.schedule({
+          notifications: [
+            {
+              title: title,
+              body: body,
+              id: Math.floor(Math.random() * 100000) + 1,
+              schedule: { at: new Date(Date.now() + 100) },
+              sound: 'default',
+              extra: { roomId: roomId, type: 'new_element' }
+            }
+          ]
+        });
+      } catch (err) {
+        console.warn('[Push] LocalNotifications schedule failed:', err);
+      }
+    } else if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, { body: body, icon: 'img/logo.png' });
+      } catch (e) { }
     }
   }
 };

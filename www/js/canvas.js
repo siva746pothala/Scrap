@@ -108,6 +108,7 @@ const ScrapCanvas = {
     this.connections = {};
     this.lastConnectionLocalEditTimes = {};
     this.activeMembers = {};
+    this.resetCollageFlowToolbar();
     const listEl = document.getElementById('active-members-list');
     if (listEl) listEl.innerHTML = '';
     if (this.canvasEl) {
@@ -144,6 +145,7 @@ const ScrapCanvas = {
     }
     localStorage.setItem('canvas_zoom_level', String(this.zoom));
 
+    this.initCollageFlowToolbar();
     this.setupWorkspaceEvents();
   },
 
@@ -904,14 +906,20 @@ const ScrapCanvas = {
 
     const incomingIds = Object.keys(map);
 
-    // Clear elements from DOM that are no longer in DB or don't match the selected date
+    const isCollageFlowActive = Boolean(this.currentCollageFilter && this.currentCollageFilter !== 'all') || Boolean(document.getElementById('collage-flow-filter-bar') && !document.getElementById('collage-flow-filter-bar').classList.contains('hidden'));
+
+    // Clear elements from DOM that are no longer in DB or don't match the selected date (unless Collage Flow is active)
     document.querySelectorAll('[id^="item_"]').forEach(domEl => {
       const id = domEl.id.replace('item_', '');
       const data = map[id];
       const elDate = data ? (data.date || this.currentDate) : null;
 
-      if (!incomingIds.includes(id) || elDate !== this.currentDate) {
+      let shouldPurge = !incomingIds.includes(id);
+      if (!shouldPurge && !isCollageFlowActive) {
+        shouldPurge = (elDate !== this.currentDate);
+      }
 
+      if (shouldPurge) {
         this.stopDoodleSparkleLoop(id);
         domEl.remove();
         if (!incomingIds.includes(id)) {
@@ -957,17 +965,23 @@ const ScrapCanvas = {
         }
       }
 
-      const elDate = data.date || this.currentDate;
+      const isCollageFlowActive = Boolean(this.currentCollageFilter && this.currentCollageFilter !== 'all') || Boolean(document.getElementById('collage-flow-filter-bar') && !document.getElementById('collage-flow-filter-bar').classList.contains('hidden'));
 
-      if (elDate === this.currentDate) {
+      let shouldRender = false;
+      if (isCollageFlowActive) {
+        shouldRender = true;
+      } else {
+        const elDate = data.date || this.currentDate;
+        shouldRender = (elDate === this.currentDate);
+      }
+
+      if (shouldRender) {
         try {
           this.renderOrUpdateElementDom(id, data);
-
-        } catch (e) {
-
-        }
+        } catch (e) { }
       } else {
-
+        const existing = document.getElementById(`item_${id}`);
+        if (existing) existing.remove();
       }
     }
 
@@ -996,11 +1010,10 @@ const ScrapCanvas = {
     if (window.pendingScrollToElementId) {
       const data = map[window.pendingScrollToElementId];
       if (data) {
-
         window.pendingScrollToElementId = null;
         // Wait slightly for DOM layouts to settle and container bounds to expand
         setTimeout(() => {
-          this.centerOnElement(Number(data.x) || 2412, Number(data.y) || 2400, 224, 250);
+          this.centerOnElement(Number(data.x) || 2412, Number(data.y) || 2400, 192, 216);
         }, 100);
       }
     }
@@ -1008,6 +1021,17 @@ const ScrapCanvas = {
     // Evaluate empty date message and photo long-press tooltip by default
     this.checkEmptyDateMessage(map);
     this.checkFirstPhotoTip(map);
+
+    if (this.currentCollageFilter && this.currentCollageFilter !== 'all') {
+      const allDomItems = Array.from(document.querySelectorAll('[id^="item_"]'));
+      allDomItems.forEach(domEl => {
+        const id = domEl.id.replace('item_', '');
+        const itemData = map[id];
+        if (itemData) {
+          this.applyCollageFlowFilterSingle(domEl, itemData);
+        }
+      });
+    }
   },
 
   checkEmptyDateMessage(map) {
@@ -1015,6 +1039,13 @@ const ScrapCanvas = {
     const svgId = 'canvas-empty-date-arrow-svg';
     const existing = document.getElementById(bannerId);
     const existingSvg = document.getElementById(svgId);
+
+    const collageFlowBar = document.getElementById('collage-flow-filter-bar');
+    if (collageFlowBar && !collageFlowBar.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
 
     const activeScreen = document.querySelector('.screen:not(.hidden)');
     if (activeScreen && activeScreen.id !== 'screen-canvas') {
@@ -1369,7 +1400,7 @@ const ScrapCanvas = {
         const borderCSS = ScrapCanvas.getPolaroidBorderCSS(borderStyle);
         const filterClass = data.filterStyle ? `filter-${data.filterStyle}` : '';
         contentContainer.innerHTML = `
-          <div class="polaroid-wrapper w-48 p-2.5 rounded shadow-2xl relative" style="${borderCSS.wrapper}">
+          <div class="polaroid-wrapper w-48 p-2.5 rounded-xl shadow-2xl relative" style="${borderCSS.wrapper}">
             <!-- Washi tape decorations -->
             <div class="washi-tape-decor absolute inset-0 pointer-events-none z-20 ${borderStyle === 'washi_tape' ? '' : 'hidden'}">
               <div class="absolute -top-3.5 -left-3 w-10 h-4 bg-yellow-400/40 border border-yellow-400/20 rotate-[-25deg] shadow-sm" style="background-image: repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 4px);"></div>
@@ -1443,6 +1474,9 @@ const ScrapCanvas = {
             const handleDetachSticker = async (evt) => {
               evt.stopPropagation();
               if (evt.cancelable) evt.preventDefault();
+
+              const collageFlowBar = document.getElementById('collage-flow-filter-bar');
+              if (collageFlowBar && !collageFlowBar.classList.contains('hidden')) return;
 
               let itemTypeName = "element";
               if (s.type === 'doodle') itemTypeName = "drawing";
@@ -2120,6 +2154,7 @@ const ScrapCanvas = {
     }
 
     this.updateElementStyle(id, data);
+    this.applyCollageFlowFilterSingle(domEl, data);
   },
 
   // Polaroid border CSS definitions
@@ -2252,6 +2287,13 @@ const ScrapCanvas = {
           img.src = url;
           img.classList.remove('hidden');
           loader.classList.add('hidden');
+
+          // The reel can open before decryption finishes. Keep its active slide in sync.
+          if (this.storyReelItems && this.storyReelItems[this.storyReelIndex] &&
+            this.storyReelItems[this.storyReelIndex].id === id) {
+            const reelImg = document.getElementById('story-reel-img');
+            if (reelImg) reelImg.src = url;
+          }
         }
 
       } catch (e) {
@@ -2636,6 +2678,11 @@ const ScrapCanvas = {
     let longPressY = 0;
 
     const startLongPress = (clientX, clientY) => {
+      // In Collage Flow mode, suppress long press controls/menus completely
+      const collageFlowBar = document.getElementById('collage-flow-filter-bar');
+      if (collageFlowBar && !collageFlowBar.classList.contains('hidden')) {
+        return;
+      }
       longPressTriggered = false;
       longPressX = clientX;
       longPressY = clientY;
@@ -4542,6 +4589,775 @@ const ScrapCanvas = {
         labelEl.addEventListener('touchend', handleLabelTap);
         this.connectionLabelsEl.appendChild(labelEl);
       }
+    }
+  },
+
+  // ==============================================
+  // COLLAGE FLOW TIME FILTER ENGINE
+  // ==============================================
+  currentCollageFilter: 'all',
+
+  initCollageFlowToolbar() {
+    const bar = document.getElementById('collage-flow-filter-bar');
+    if (!bar) return;
+
+    this.initStoryReelEvents();
+
+    // Filter Chips
+    const chips = bar.querySelectorAll('.collage-flow-chip');
+    chips.forEach(chip => {
+      const selectFilter = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        chips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        const yearSelect = document.getElementById('collage-flow-year-select');
+        if (yearSelect) yearSelect.value = '';
+        this.setCollageFlowFilter(chip.dataset.filter);
+      };
+
+      chip.addEventListener('click', selectFilter);
+      chip.addEventListener('touchend', (e) => {
+        // Only trigger if user tapped (didn't drag the bar)
+        if (!bar.dataset.wasDragging) {
+          selectFilter(e);
+        }
+      });
+    });
+
+    // Year Dropdown
+    const yearSelect = document.getElementById('collage-flow-year-select');
+    if (yearSelect) {
+      this.populateCollageFlowYears(yearSelect);
+      yearSelect.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val) {
+          chips.forEach(c => c.classList.remove('active'));
+          this.setCollageFlowFilter('year:' + val);
+        } else {
+          chips[0]?.click();
+        }
+      });
+    }
+
+    // Touch / Mouse Dragging anywhere on toolbar
+    if (bar) {
+      let isDragging = false;
+      let hasMoved = false;
+      let startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
+      let rafId = null;
+      let currentDx = 0, currentDy = 0;
+
+      const updatePosition = () => {
+        if (!isDragging) return;
+        const newLeft = Math.max(8, Math.min(window.innerWidth - 80, initialLeft + currentDx));
+        const newTop = Math.max(8, Math.min(window.innerHeight - 60, initialTop + currentDy));
+        bar.style.left = `${newLeft}px`;
+        bar.style.top = `${newTop}px`;
+        rafId = null;
+      };
+
+      const onStart = (e) => {
+        // If user tapped a button or select dropdown, don't drag
+        if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+
+        const touch = e.touches ? e.touches[0] : e;
+        if (!touch) return;
+        isDragging = true;
+        hasMoved = false;
+        bar.dataset.wasDragging = '';
+        startX = touch.clientX;
+        startY = touch.clientY;
+        const rect = bar.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        bar.style.transition = 'none';
+        bar.style.willChange = 'left, top';
+      };
+
+      const onMove = (e) => {
+        if (!isDragging) return;
+        const touch = e.touches ? e.touches[0] : e;
+        if (!touch) return;
+        currentDx = touch.clientX - startX;
+        currentDy = touch.clientY - startY;
+
+        if (Math.abs(currentDx) > 5 || Math.abs(currentDy) > 5) {
+          hasMoved = true;
+          bar.dataset.wasDragging = 'true';
+          if (!rafId) {
+            rafId = requestAnimationFrame(updatePosition);
+          }
+          if (e.cancelable) e.preventDefault();
+        }
+      };
+
+      const onEnd = () => {
+        if (isDragging) {
+          isDragging = false;
+          bar.style.willChange = 'auto';
+          if (rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          setTimeout(() => {
+            bar.dataset.wasDragging = '';
+          }, 100);
+        }
+      };
+
+      bar.addEventListener('mousedown', onStart);
+      window.addEventListener('mousemove', onMove, { passive: false });
+      window.addEventListener('mouseup', onEnd);
+
+      bar.addEventListener('touchstart', onStart, { passive: true });
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend', onEnd);
+      window.addEventListener('touchcancel', onEnd);
+    }
+  },
+
+  populateCollageFlowYears(selectEl) {
+    const years = new Set();
+    const currentYear = new Date().getFullYear();
+    years.add(currentYear);
+
+    Object.values(this.elements || {}).forEach(item => {
+      const dateStr = item.date || item.createdAt;
+      if (dateStr) {
+        const yr = new Date(dateStr).getFullYear();
+        if (!isNaN(yr)) years.add(yr);
+      }
+    });
+
+    const sortedYears = Array.from(years).sort((a, b) => b - a);
+    selectEl.innerHTML = '<option value="">Year...</option>' +
+      sortedYears.map(y => `<option value="${y}">${y}</option>`).join('');
+  },
+
+  parseLocalDate(dateStr) {
+    if (!dateStr) return null;
+    if (typeof dateStr === 'number') return new Date(dateStr);
+    const parts = String(dateStr).split('T')[0].split('-');
+    if (parts.length === 3) {
+      return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    }
+    return new Date(dateStr);
+  },
+
+  applyCollageFlowFilterSingle(domEl, itemData) {
+    if (!domEl) return;
+    const filterType = this.currentCollageFilter || 'all';
+    if (filterType === 'all') {
+      domEl.classList.remove('element-filtered-dimmed');
+      domEl.classList.add('element-filtered-active');
+      return;
+    }
+    if (filterType === 'none' || !itemData) {
+      domEl.classList.remove('element-filtered-active');
+      domEl.classList.add('element-filtered-dimmed');
+      return;
+    }
+
+    // Build real calendar today string in local time
+    const localNow = new Date();
+    const todayYear = localNow.getFullYear();
+    const todayMonth = String(localNow.getMonth() + 1).padStart(2, '0');
+    const todayDay = String(localNow.getDate()).padStart(2, '0');
+    const calendarTodayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+
+    // "currentDate" is the board date the user is browsing (date picker value)
+    const boardDate = this.currentDate || calendarTodayStr;
+
+    // Resolve item's date string
+    const fallbackDateStr = itemData.createdAt
+      ? new Date(itemData.createdAt).toLocaleDateString('en-CA')
+      : boardDate;
+    const itemDateStr = itemData.date || fallbackDateStr;
+
+    // For time-range filters, measure days from the actual calendar today (not board date)
+    const itemDate = this.parseLocalDate(itemDateStr) || localNow;
+    const calToday = this.parseLocalDate(calendarTodayStr);
+    const diffDays = (calToday.getTime() - itemDate.getTime()) / (1000 * 60 * 60 * 24);
+
+    let isMatch = false;
+
+    if (filterType === 'today') {
+      // STRICT: only show photos from today's actual calendar date
+      isMatch = (itemDateStr === calendarTodayStr);
+    } else if (filterType === 'last2days') {
+      // Today + yesterday: diffDays is 0 (today), 1 (yesterday)
+      isMatch = (diffDays >= 0 && diffDays < 2);
+    } else if (filterType === 'last7days') {
+      // Last 7 days: diffDays 0-6
+      isMatch = (diffDays >= 0 && diffDays < 7);
+    } else if (filterType === 'last2weeks') {
+      // Rolling two weeks: today plus the previous 13 calendar days.
+      isMatch = (diffDays >= 0 && diffDays < 14);
+    } else if (filterType.startsWith('year:')) {
+      const targetYear = parseInt(filterType.split(':')[1], 10);
+      isMatch = (itemDate.getFullYear() === targetYear);
+    } else if (filterType.startsWith('date:')) {
+      isMatch = itemDateStr === filterType.slice(5);
+    }
+
+    if (isMatch) {
+      domEl.classList.remove('element-filtered-dimmed');
+      domEl.classList.add('element-filtered-active');
+    } else {
+      domEl.classList.remove('element-filtered-active');
+      domEl.classList.add('element-filtered-dimmed');
+    }
+  },
+
+  setCollageFlowFilter(filterType) {
+    this.currentCollageFilter = filterType;
+
+    // Use ALL elements from ScrapFirebase (all dates) for collage mode,
+    // so chips like "Today", "Last 2 Days", "7 Days" show photos across dates.
+    const allElements = (window.ScrapFirebase && window.ScrapFirebase.elements && Object.keys(window.ScrapFirebase.elements).length > 0)
+      ? window.ScrapFirebase.elements
+      : this.elements;
+
+    console.log('[CollageFlow] setCollageFlowFilter:', filterType, 'elementCount:', allElements ? Object.keys(allElements).length : 0);
+
+    const filteredPhotos = this.getCollageFlowPhotos(allElements, filterType);
+    this.storyReelItems = filteredPhotos;
+
+    if (filterType !== 'none' && filterType !== 'all') {
+      this.openStoryReel(filteredPhotos);
+    }
+  },
+
+  getCollageFlowPhotos(allElements, filterType) {
+    const localNow = new Date();
+    const calendarTodayStr = [
+      localNow.getFullYear(),
+      String(localNow.getMonth() + 1).padStart(2, '0'),
+      String(localNow.getDate()).padStart(2, '0')
+    ].join('-');
+
+    return Object.entries(allElements || {})
+      .filter(([, item]) => item && item.type === 'photo')
+      .filter(([, item]) => {
+        const itemDateStr = item.date || (item.createdAt
+          ? new Date(item.createdAt).toLocaleDateString('en-CA')
+          : calendarTodayStr);
+        const itemDate = this.parseLocalDate(itemDateStr) || localNow;
+        const diffDays = (this.parseLocalDate(calendarTodayStr).getTime() - itemDate.getTime()) /
+          (1000 * 60 * 60 * 24);
+
+        if (filterType === 'today') return itemDateStr === calendarTodayStr;
+        if (filterType === 'last2days') return diffDays >= 0 && diffDays < 2;
+        if (filterType === 'last7days') return diffDays >= 0 && diffDays < 7;
+        if (filterType === 'last2weeks') return diffDays >= 0 && diffDays < 14;
+        if (filterType.startsWith('year:')) {
+          return itemDate.getFullYear() === parseInt(filterType.slice(5), 10);
+        }
+        if (filterType.startsWith('date:')) return itemDateStr === filterType.slice(5);
+        return false;
+      })
+      .map(([id, item]) => ({ id, ...item }));
+  },
+
+  updateDatePickerVisibility() {
+    const datePickerContainer = document.getElementById('canvas-date-picker-container');
+    const collageFlowBar = document.getElementById('collage-flow-filter-bar');
+    const bottomBar = document.getElementById('canvas-bottom-bar');
+    const workspace = document.getElementById('canvas-workspace');
+
+    if (!datePickerContainer) return;
+
+    const isCollageFlowActive = collageFlowBar && !collageFlowBar.classList.contains('hidden');
+
+    if (isCollageFlowActive) {
+      document.body.classList.add('collage-flow-mode-active');
+      datePickerContainer.classList.add('hidden');
+      if (workspace) {
+        workspace.style.display = 'none';
+        workspace.style.pointerEvents = 'none';
+      }
+      if (bottomBar) bottomBar.classList.add('hidden');
+      const existing = document.getElementById('canvas-empty-date-info-banner');
+      const existingSvg = document.getElementById('canvas-empty-date-arrow-svg');
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+    } else {
+      document.body.classList.remove('collage-flow-mode-active');
+      datePickerContainer.classList.remove('hidden');
+      if (workspace) {
+        workspace.style.display = '';
+        workspace.style.pointerEvents = '';
+      }
+      if (bottomBar) bottomBar.classList.remove('hidden');
+      this.closeStoryReel();
+    }
+  },
+
+  resetCollageFlowToolbar() {
+    this.closeStoryReel();
+    document.body.classList.remove('collage-flow-mode-active');
+    const bar = document.getElementById('collage-flow-filter-bar');
+    if (bar) {
+      bar.classList.add('hidden');
+      bar.style.left = '';
+      bar.style.top = '';
+      bar.style.willChange = 'auto';
+      const todayChip = bar.querySelector('.collage-flow-chip[data-filter="today"]');
+      if (todayChip) {
+        const chips = bar.querySelectorAll('.collage-flow-chip');
+        chips.forEach(c => c.classList.remove('active'));
+        todayChip.classList.add('active');
+      }
+      const yearSelect = document.getElementById('collage-flow-year-select');
+      if (yearSelect) yearSelect.value = '';
+    }
+    this.currentCollageFilter = 'all';
+    this.setCollageFlowFilter('all');
+    this.updateDatePickerVisibility();
+  },
+
+  // ==============================================
+  // STORY REEL SLIDESHOW & WEB AUDIO SYNTHESIZER
+  // ==============================================
+  storyReelItems: [],
+  storyReelIndex: 0,
+  storyReelTimer: null,
+  storyReelIsPaused: false,
+  storyReelLoadToken: 0,
+  audioCtx: null,
+  bgMusicOscillators: [],
+  bgMusicIsMuted: true,
+
+  initStoryReelEvents() {
+    const btnReel = document.getElementById('btn-collage-story-reel');
+    if (btnReel) {
+      btnReel.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openStoryReel();
+      });
+    }
+
+    const btnClose = document.getElementById('btn-close-story-reel');
+    if (btnClose) {
+      btnClose.addEventListener('click', () => this.closeStoryReel());
+    }
+
+    const btnPause = document.getElementById('btn-story-reel-pause');
+    if (btnPause) {
+      btnPause.addEventListener('click', () => this.toggleStoryReelPause());
+    }
+
+    const btnNext = document.getElementById('btn-story-reel-next');
+    if (btnNext) {
+      btnNext.addEventListener('click', () => this.nextStoryReelSlide());
+    }
+
+    const tapPrev = document.getElementById('story-reel-tap-prev');
+    if (tapPrev) {
+      tapPrev.addEventListener('click', () => this.prevStoryReelSlide());
+    }
+
+    const tapNext = document.getElementById('story-reel-tap-next');
+    if (tapNext) {
+      tapNext.addEventListener('click', () => this.nextStoryReelSlide());
+    }
+
+    const btnMusic = document.getElementById('btn-story-music-toggle');
+    if (btnMusic) {
+      btnMusic.addEventListener('click', () => this.toggleStoryReelMusic());
+    }
+  },
+
+  getActiveCollageElements() {
+    const allElements = (window.ScrapFirebase && window.ScrapFirebase.elements && Object.keys(window.ScrapFirebase.elements).length > 0)
+      ? window.ScrapFirebase.elements
+      : (this.elements || {});
+
+    // First try DOM elements with element-filtered-active
+    const activeDomEls = Array.from(document.querySelectorAll('.element-filtered-active[id^="item_"]'));
+    let items = [];
+
+    activeDomEls.forEach(el => {
+      const id = el.id.replace('item_', '');
+      const data = allElements && allElements[id];
+      if (data) {
+        items.push({ id, ...data });
+      }
+    });
+
+    // Fallback: If DOM elements haven't rendered or active class was pending, test allElements directly
+    if (items.length === 0 && this.currentCollageFilter && this.currentCollageFilter !== 'none') {
+      const localNow = new Date();
+      const todayYear = localNow.getFullYear();
+      const todayMonth = String(localNow.getMonth() + 1).padStart(2, '0');
+      const todayDay = String(localNow.getDate()).padStart(2, '0');
+      const calendarTodayStr = `${todayYear}-${todayMonth}-${todayDay}`;
+
+      Object.keys(allElements).forEach(id => {
+        const itemData = allElements[id];
+        if (!itemData) return;
+        const itemDateStr = itemData.date || (itemData.createdAt ? new Date(itemData.createdAt).toLocaleDateString('en-CA') : calendarTodayStr);
+        const itemDate = this.parseLocalDate(itemDateStr) || localNow;
+        const calToday = this.parseLocalDate(calendarTodayStr);
+        const diffDays = (calToday.getTime() - itemDate.getTime()) / (1000 * 60 * 60 * 24);
+
+        let isMatch = false;
+        const filterType = this.currentCollageFilter;
+
+        if (filterType === 'all') isMatch = true;
+        else if (filterType === 'today') isMatch = (itemDateStr === calendarTodayStr);
+        else if (filterType === 'last2days') isMatch = (diffDays >= 0 && diffDays < 2);
+        else if (filterType === 'last7days') isMatch = (diffDays >= 0 && diffDays < 7);
+        else if (filterType.startsWith('year:')) isMatch = (itemDate.getFullYear() === parseInt(filterType.split(':')[1], 10));
+        else if (filterType.startsWith('date:')) isMatch = itemDateStr === filterType.slice(5);
+
+        if (isMatch) {
+          items.push({ id, ...itemData });
+        }
+      });
+    }
+
+    return items.filter(item => item.type === 'photo');
+  },
+
+  openStoryReel(items = null) {
+    items = items || this.getActiveCollageElements();
+    if (!items || items.length === 0) {
+      if (window.ScrapApp && typeof window.ScrapApp.showToast === 'function') {
+        window.ScrapApp.showToast('No photos found in current filter!');
+      }
+      return;
+    }
+
+    this.storyReelItems = items;
+    this.storyReelIndex = 0;
+    this.storyReelIsPaused = false;
+    this.bgMusicIsMuted = true;
+    const musicIcon = document.getElementById('story-music-icon');
+    if (musicIcon) musicIcon.textContent = '🔇';
+    this.storyReelLoadToken++;
+
+    const modal = document.getElementById('story-reel-modal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      document.body.classList.add('story-reel-active');
+    }
+
+    this.buildStoryReelBars();
+    this.renderStoryReelSlide(0);
+    this.startStoryReelTimer();
+    this.stopBackgroundMusic();
+  },
+
+  closeStoryReel() {
+    const modal = document.getElementById('story-reel-modal');
+    if (modal) modal.classList.add('hidden');
+    document.body.classList.remove('story-reel-active');
+    this.storyReelLoadToken++;
+
+    if (this.storyReelTimer) {
+      clearInterval(this.storyReelTimer);
+      this.storyReelTimer = null;
+    }
+    this.stopBackgroundMusic();
+  },
+
+  buildStoryReelBars() {
+    const container = document.getElementById('story-reel-progress-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const total = this.storyReelItems.length;
+    for (let i = 0; i < total; i++) {
+      const barBg = document.createElement('div');
+      barBg.className = 'flex-1 bg-white/20 rounded-full overflow-hidden h-full';
+
+      const barFill = document.createElement('div');
+      barFill.className = 'h-full bg-white transition-all duration-100 ease-linear story-bar-fill';
+      barFill.id = `story-bar-fill-${i}`;
+      barFill.style.width = '0%';
+
+      barBg.appendChild(barFill);
+      container.appendChild(barBg);
+    }
+
+    const totalEl = document.getElementById('story-reel-total-count');
+    if (totalEl) totalEl.textContent = total;
+  },
+
+  renderStoryReelSlide(index) {
+    if (!this.storyReelItems || this.storyReelItems.length === 0) return;
+    if (index < 0 || index >= this.storyReelItems.length) return;
+
+    this.storyReelIndex = index;
+    const item = this.storyReelItems[index];
+
+    const imgEl = document.getElementById('story-reel-img');
+    if (imgEl) {
+      imgEl.removeAttribute('src');
+      imgEl.alt = 'Loading photo';
+    }
+    this.loadStoryReelPhoto(item);
+
+    const attachmentsEl = document.getElementById('story-reel-attachments');
+    if (attachmentsEl) {
+      attachmentsEl.innerHTML = '';
+      Object.values(item.stickers || {}).forEach(sticker => {
+        const attachment = document.createElement('div');
+        attachment.className = 'absolute pointer-events-none select-none';
+        attachment.style.left = `${50 + ((sticker.x || 0) / 1.92)}%`;
+        attachment.style.top = `${50 + ((sticker.y || 0) / 2.16)}%`;
+        attachment.style.transform = `translate(-50%, -50%) rotate(${sticker.rotation || 0}deg) scale(${sticker.scale || 1})`;
+
+        if (sticker.type === 'sticker' && sticker.src) {
+          const image = document.createElement('img');
+          image.src = sticker.src;
+          image.alt = '';
+          image.draggable = false;
+          image.style.width = `${(sticker.width || 80) / 1.92}vw`;
+          image.style.height = `${(sticker.height || 80) / 2.16}vh`;
+          image.className = 'object-contain';
+          attachment.appendChild(image);
+        } else if (sticker.type === 'doodle' && sticker.strokes) {
+          const drawing = document.createElement('canvas');
+          drawing.width = sticker.width || 192;
+          drawing.height = sticker.height || 192;
+          drawing.style.width = `${(sticker.width || 192) / 1.92}vw`;
+          drawing.style.height = `${(sticker.height || 192) / 2.16}vh`;
+          this.drawDoodleOnElementCanvas(drawing, sticker);
+          attachment.appendChild(drawing);
+        } else if (sticker.text) {
+          attachment.textContent = sticker.text;
+          attachment.style.fontSize = '32px';
+          attachment.style.whiteSpace = 'nowrap';
+        }
+        attachmentsEl.appendChild(attachment);
+      });
+    }
+
+    // Update Author & Date
+    const authorEl = document.getElementById('story-reel-author');
+    if (authorEl) {
+      authorEl.textContent = item.author || item.userName || 'Memory Story';
+    }
+
+    const dateEl = document.getElementById('story-reel-date');
+    if (dateEl) {
+      dateEl.textContent = item.date || item.createdAt || 'Scrap Memory';
+    }
+
+    // Update Caption
+    const captionContainer = document.getElementById('story-reel-caption-container');
+    if (captionContainer) captionContainer.classList.add('hidden');
+
+    // Update Progress Bars
+    for (let i = 0; i < this.storyReelItems.length; i++) {
+      const barFill = document.getElementById(`story-bar-fill-${i}`);
+      if (barFill) {
+        if (i < index) {
+          barFill.style.width = '100%';
+        } else if (i === index) {
+          barFill.style.width = '0%';
+        } else {
+          barFill.style.width = '0%';
+        }
+      }
+    }
+
+    const currentIdxEl = document.getElementById('story-reel-current-idx');
+    if (currentIdxEl) currentIdxEl.textContent = index + 1;
+  },
+
+  async loadStoryReelPhoto(item) {
+    const loadToken = ++this.storyReelLoadToken;
+    const imgEl = document.getElementById('story-reel-img');
+    if (!imgEl || !item) return;
+
+    try {
+      const encryptedData = item.encryptedData || item.fileId;
+      if (!encryptedData) throw new Error('Photo data is unavailable.');
+
+      const roomId = (window.ScrapApp && window.ScrapApp.currentRoomId) || ScrapFirebase.roomId;
+      const diskCacheName = `collage_photo_${roomId || 'room'}_${item.id}.enc`;
+      let encryptedBuffer;
+      const cachedBuffer = await ScrapDrive.readLocalCacheFile(diskCacheName);
+      if (cachedBuffer) {
+        encryptedBuffer = cachedBuffer;
+      } else if (item.fileId && !item.encryptedData) {
+        encryptedBuffer = await ScrapDrive.downloadFile(item.fileId);
+        await ScrapDrive.writeLocalCacheFile(diskCacheName, encryptedBuffer);
+      } else {
+        encryptedBuffer = ScrapCrypto.base64ToArrayBuffer(encryptedData);
+        await ScrapDrive.writeLocalCacheFile(diskCacheName, encryptedBuffer);
+      }
+
+      const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+      if (!roomKey) throw new Error('Room key unavailable.');
+
+      const decrypted = await ScrapCrypto.decryptData(encryptedBuffer, roomKey);
+      if (loadToken !== this.storyReelLoadToken ||
+        this.storyReelItems[this.storyReelIndex] !== item) return;
+
+      imgEl.src = `data:image/jpeg;base64,${ScrapCrypto.arrayBufferToBase64(decrypted)}`;
+      imgEl.alt = 'Memory photo';
+    } catch (error) {
+      if (loadToken === this.storyReelLoadToken) {
+        imgEl.alt = 'Unable to load photo';
+        console.warn('[StoryReel] Photo load failed:', error);
+      }
+    }
+  },
+
+  startStoryReelTimer() {
+    if (this.storyReelTimer) clearInterval(this.storyReelTimer);
+
+    let progress = 0;
+    const stepDurationMs = 50;
+    const totalSlideMs = 4000;
+    const increment = (stepDurationMs / totalSlideMs) * 100;
+
+    this.storyReelTimer = setInterval(() => {
+      if (this.storyReelIsPaused) return;
+
+      progress += increment;
+      const barFill = document.getElementById(`story-bar-fill-${this.storyReelIndex}`);
+      if (barFill) {
+        barFill.style.width = `${Math.min(100, progress)}%`;
+      }
+
+      if (progress >= 100) {
+        progress = 0;
+        if (this.storyReelIndex < this.storyReelItems.length - 1) {
+          this.renderStoryReelSlide(this.storyReelIndex + 1);
+        } else {
+          // Photos display completed -> Stop slideshow & stop music
+          this.closeStoryReel();
+        }
+      }
+    }, stepDurationMs);
+  },
+
+  toggleStoryReelPause() {
+    this.storyReelIsPaused = !this.storyReelIsPaused;
+    const btnPause = document.getElementById('story-reel-pause-icon') || document.getElementById('btn-story-reel-pause');
+    if (btnPause) {
+      btnPause.textContent = this.storyReelIsPaused ? '▶ Play' : '⏸ Pause';
+    }
+  },
+
+  nextStoryReelSlide() {
+    if (this.storyReelIndex < this.storyReelItems.length - 1) {
+      this.renderStoryReelSlide(this.storyReelIndex + 1);
+      this.startStoryReelTimer();
+    } else {
+      this.closeStoryReel();
+    }
+  },
+
+  prevStoryReelSlide() {
+    if (this.storyReelIndex > 0) {
+      this.renderStoryReelSlide(this.storyReelIndex - 1);
+      this.startStoryReelTimer();
+    } else {
+      this.renderStoryReelSlide(0);
+      this.startStoryReelTimer();
+    }
+  },
+
+  // Synthesize rich ambient melody music using Web Audio API (LOUDER VOLUME & CLEAR HARMONICS)
+  startBackgroundMusic() {
+    if (this.bgMusicIsMuted) return;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+
+      if (!this.audioCtx) {
+        this.audioCtx = new AudioCtx();
+      }
+
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume();
+      }
+
+      this.stopBackgroundMusic();
+
+      const masterGain = this.audioCtx.createGain();
+      masterGain.gain.setValueAtTime(0.2, this.audioCtx.currentTime);
+      masterGain.connect(this.audioCtx.destination);
+
+      // Slow, single-note memory melody instead of a repeating chord beat.
+      const memoryMelody = [392.00, 440.00, 493.88, 440.00, 392.00, 329.63, 349.23, 392.00];
+      let melodyIndex = 0;
+      const playMemoryNote = () => {
+        if (!this.audioCtx || this.bgMusicIsMuted) return;
+
+        this.bgMusicOscillators.forEach(osc => {
+          try { osc.stop(); osc.disconnect(); } catch (e) { }
+        });
+        this.bgMusicOscillators = [];
+
+        const osc = this.audioCtx.createOscillator();
+        const oscGain = this.audioCtx.createGain();
+        const now = this.audioCtx.currentTime;
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(memoryMelody[melodyIndex], now);
+
+        const vibrato = this.audioCtx.createOscillator();
+        const vibratoGain = this.audioCtx.createGain();
+        vibrato.frequency.setValueAtTime(5.1, now);
+        vibratoGain.gain.setValueAtTime(2, now);
+        vibrato.connect(vibratoGain);
+        vibratoGain.connect(osc.frequency);
+
+        oscGain.gain.setValueAtTime(0.001, now);
+        oscGain.gain.exponentialRampToValueAtTime(0.16, now + 0.45);
+        oscGain.gain.exponentialRampToValueAtTime(0.001, now + 2.25);
+        osc.connect(oscGain);
+        oscGain.connect(masterGain);
+        osc.start(now);
+        vibrato.start(now);
+        osc.stop(now + 2.35);
+        vibrato.stop(now + 2.35);
+        this.bgMusicOscillators.push(osc);
+        melodyIndex = (melodyIndex + 1) % memoryMelody.length;
+      };
+
+      playMemoryNote();
+      this.musicInterval = setInterval(() => playMemoryNote(), 2400);
+    } catch (err) {
+      console.warn('[StoryReel] Web Audio playback failed:', err);
+    }
+  },
+
+  stopBackgroundMusic() {
+    if (this.musicInterval) {
+      clearInterval(this.musicInterval);
+      this.musicInterval = null;
+    }
+    if (this.bgMusicOscillators) {
+      this.bgMusicOscillators.forEach(osc => {
+        try { osc.stop(); osc.disconnect(); } catch (e) { }
+      });
+      this.bgMusicOscillators = [];
+    }
+  },
+
+  toggleStoryReelMusic() {
+    this.bgMusicIsMuted = !this.bgMusicIsMuted;
+    const musicStatus = document.getElementById('story-music-status');
+    const musicIcon = document.getElementById('story-music-icon');
+
+    if (this.bgMusicIsMuted) {
+      if (musicStatus) musicStatus.textContent = 'Muted';
+      if (musicIcon) musicIcon.textContent = '🔇';
+      this.stopBackgroundMusic();
+    } else {
+      if (musicIcon) musicIcon.textContent = '🎵';
+      this.startBackgroundMusic();
     }
   }
 };
