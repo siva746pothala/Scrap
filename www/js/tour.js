@@ -163,6 +163,23 @@ window.ScrapTour = (function () {
       requiresMenu: true
     },
     {
+      id: 'btn-toggle-collage-flow',
+      target: '#btn-toggle-collage-flow',
+      title: '🌊 Collage Flow',
+      description: 'Toggle the Collage Flow Floating Filter Bar to view photos across dates with slideshow & music.',
+      position: 'bottom-right',
+      requiresMenu: true
+    },
+    {
+      id: 'collage-flow-filter-bar',
+      target: '#collage-flow-filter-bar',
+      title: '🎞️ Collage Flow Filter Toolbar',
+      description: 'Filter photos by Today, Last 2 Days, 7 Days, or Year. Drag anywhere on the bar to reposition it!',
+      position: 'top-left',
+      requiresMenu: false,
+      requiresCollageBar: true
+    },
+    {
       id: 'btn-leave-room',
       target: '#btn-leave-room',
       title: '🚪 Leave Space',
@@ -309,17 +326,24 @@ window.ScrapTour = (function () {
     cardEl.addEventListener('wheel', (e) => e.stopPropagation());
   }
 
-  function ensureMenuState(requiresMenu) {
+  function ensureMenuState(requiresMenu, requiresCollageBar) {
     const menuEl = document.getElementById('hud-collapsible-menu');
-    if (!menuEl) return;
+    if (menuEl) {
+      const steps = getCurrentSteps();
+      if (requiresMenu) {
+        menuEl.classList.remove('hidden');
+      } else {
+        const currentStep = steps[currentStepIndex];
+        if (currentStep && currentStep.target === '#btn-hud-toggle-menu') {
+          menuEl.classList.add('hidden');
+        }
+      }
+    }
 
-    const steps = getCurrentSteps();
-    if (requiresMenu) {
-      menuEl.classList.remove('hidden');
-    } else {
-      const currentStep = steps[currentStepIndex];
-      if (currentStep && currentStep.target === '#btn-hud-toggle-menu') {
-        menuEl.classList.add('hidden');
+    const collageBarEl = document.getElementById('collage-flow-filter-bar');
+    if (collageBarEl) {
+      if (requiresCollageBar) {
+        collageBarEl.classList.remove('hidden');
       }
     }
   }
@@ -330,7 +354,7 @@ window.ScrapTour = (function () {
     currentStepIndex = index;
     const step = steps[index];
 
-    ensureMenuState(step.requiresMenu);
+    ensureMenuState(step.requiresMenu, step.requiresCollageBar);
 
     const badgeEl = document.getElementById('tour-badge');
     const titleEl = document.getElementById('tour-title');
@@ -546,6 +570,14 @@ window.ScrapTour = (function () {
     // Close options menu if opened by tour
     const menuEl = document.getElementById('hud-collapsible-menu');
     if (menuEl) menuEl.classList.add('hidden');
+
+    // Reset and hide Collage Flow filter toolbar when tour finishes or skips
+    if (window.ScrapCanvas && typeof window.ScrapCanvas.resetCollageFlowToolbar === 'function') {
+      window.ScrapCanvas.resetCollageFlowToolbar();
+    } else {
+      const collageBarEl = document.getElementById('collage-flow-filter-bar');
+      if (collageBarEl) collageBarEl.classList.add('hidden');
+    }
 
     localStorage.setItem(getStorageKey(), 'true');
   }

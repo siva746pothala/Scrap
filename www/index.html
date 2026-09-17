@@ -643,8 +643,8 @@
       </div>
 
       <!-- Story Footer Controls -->
-      <div class="w-full flex items-center justify-between px-2 pb-2 z-10">
-        <button id="btn-story-reel-pause" class="px-4 py-2 mb-[env(safe-area-inset-bottom,0px)] rounded-full bg-orange-500 border border-orange-300 text-black text-xs font-space font-bold uppercase tracking-wider hover:bg-orange-400 transition-all">
+      <div class="w-full flex items-center justify-between px-2 pb-2 z-30 relative pointer-events-auto">
+        <button id="btn-story-reel-pause" class="px-4 py-2 mb-[env(safe-area-inset-bottom,0px)] rounded-full bg-orange-500 border border-orange-300 text-black text-xs font-space font-bold uppercase tracking-wider hover:bg-orange-400 transition-all cursor-pointer">
           ⏸ Pause
         </button>
 
@@ -700,13 +700,19 @@
         <button id="btn-close-scrapbook" class="btn-close-preview text-lg font-bold">✕</button>
       </div>
       <!-- Year/Month Filter Controls -->
-      <div class="flex items-center justify-center gap-2 mb-4 bg-black/40 p-2 rounded-2xl border border-white/5">
-        <label class="text-[9px] font-space text-gray-400 uppercase tracking-widest font-bold">Past Memories:</label>
-        <select id="scrapbook-filter-year"
-          class="bg-black border border-white/10 rounded px-2.5 py-1 text-xs text-[#b026ff] font-space focus:outline-none cursor-pointer">
-        </select>
-        <select id="scrapbook-filter-month"
-          class="bg-black border border-white/10 rounded px-2.5 py-1 text-xs text-[#b026ff] font-space focus:outline-none cursor-pointer">
+      <div class="scrapbook-filter-bar" aria-label="Past Memories">
+        <div class="scrapbook-filter-heading">
+          <span class="scrapbook-filter-title">Past Memories</span>
+          <span class="scrapbook-filter-hint">Browse your shared history</span>
+        </div>
+        <label class="scrapbook-filter-field">
+          <span>Year</span>
+          <select id="scrapbook-filter-year" class="scrapbook-filter-select">
+          </select>
+        </label>
+        <label class="scrapbook-filter-field">
+          <span>Month</span>
+          <select id="scrapbook-filter-month" class="scrapbook-filter-select">
           <option value="01">January</option>
           <option value="02">February</option>
           <option value="03">March</option>
@@ -719,7 +725,8 @@
           <option value="10">October</option>
           <option value="11">November</option>
           <option value="12">December</option>
-        </select>
+          </select>
+        </label>
       </div>
       <!-- Scrollable Collage Container -->
       <div id="scrapbook-pages-container"

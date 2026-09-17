@@ -9,7 +9,7 @@
  */
 
 // Set to true to disable console logs in production/release mode
-const DISABLE_LOGS = false;
+const DISABLE_LOGS = true;
 if (DISABLE_LOGS) {
   console.log = function () { };
   console.debug = function () { };
@@ -851,6 +851,18 @@ const ScrapApp = {
         if (qrScanner && !qrScanner.classList.contains('hidden')) {
           console.log('[App] Back pressed in QR scanner: stopping camera');
           this.stopInAppQRScanner();
+          return;
+        }
+
+        const scrapbookModal = document.getElementById('modal-scrapbook');
+        if (scrapbookModal && !scrapbookModal.classList.contains('hidden')) {
+          console.log('[App] Back pressed in Scrapbook: closing modal');
+          const closeScrapbook = document.getElementById('btn-close-scrapbook');
+          if (closeScrapbook) {
+            closeScrapbook.click();
+          } else {
+            scrapbookModal.classList.add('hidden');
+          }
           return;
         }
 
@@ -3049,12 +3061,18 @@ const ScrapApp = {
             ScrapCanvas.updateActiveMembersListUI();
           }
         }
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.checkEmptyDateMessage === 'function') {
+          window.ScrapCanvas.checkEmptyDateMessage();
+        }
       });
     }
 
     if (btnCloseMembersSidebar && membersSidebar) {
       btnCloseMembersSidebar.addEventListener('click', () => {
         membersSidebar.classList.add('hidden');
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.checkEmptyDateMessage === 'function') {
+          window.ScrapCanvas.checkEmptyDateMessage();
+        }
       });
     }
 
@@ -3066,6 +3084,9 @@ const ScrapApp = {
     if (btnScrapbook && modalScrapbook) {
       btnScrapbook.addEventListener('click', () => {
         modalScrapbook.classList.remove('hidden');
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.checkEmptyDateMessage === 'function') {
+          window.ScrapCanvas.checkEmptyDateMessage();
+        }
 
         if (yearSelect && monthSelect) {
           // Collect all unique years dynamically from elements and current room date
@@ -3145,6 +3166,9 @@ const ScrapApp = {
         this.renderMoodCalendarFeed();
         const badge = document.getElementById('mood-radar-badge');
         if (badge) badge.style.display = 'none';
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.checkEmptyDateMessage === 'function') {
+          window.ScrapCanvas.checkEmptyDateMessage();
+        }
       });
     }
 
@@ -5384,6 +5408,9 @@ const ScrapApp = {
         }
         if (window.ScrapCanvas && typeof window.ScrapCanvas.updateDatePickerVisibility === 'function') {
           window.ScrapCanvas.updateDatePickerVisibility();
+        }
+        if (window.ScrapCanvas && typeof window.ScrapCanvas.checkEmptyDateMessage === 'function') {
+          window.ScrapCanvas.checkEmptyDateMessage();
         }
       });
 

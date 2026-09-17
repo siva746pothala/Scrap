@@ -1047,6 +1047,35 @@ const ScrapCanvas = {
       return;
     }
 
+    const hudMenu = document.getElementById('hud-collapsible-menu');
+    if (hudMenu && !hudMenu.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    // Hide tooltip when Scrapbook modal, Mood Radar modal, or Squad Members sidebar are active
+    const modalScrapbook = document.getElementById('modal-scrapbook');
+    if (modalScrapbook && !modalScrapbook.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    const modalMood = document.getElementById('modal-mood-calendar');
+    if (modalMood && !modalMood.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    const membersSidebar = document.getElementById('members-sidebar');
+    if (membersSidebar && !membersSidebar.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
     const activeScreen = document.querySelector('.screen:not(.hidden)');
     if (activeScreen && activeScreen.id !== 'screen-canvas') {
       if (existing) existing.remove();
@@ -4927,11 +4956,15 @@ const ScrapCanvas = {
   storyReelTimer: null,
   storyReelIsPaused: false,
   storyReelLoadToken: 0,
+  storyReelEventsInitialized: false,
   audioCtx: null,
   bgMusicOscillators: [],
   bgMusicIsMuted: true,
 
   initStoryReelEvents() {
+    if (this.storyReelEventsInitialized) return;
+    this.storyReelEventsInitialized = true;
+
     const btnReel = document.getElementById('btn-collage-story-reel');
     if (btnReel) {
       btnReel.addEventListener('click', (e) => {
@@ -4948,7 +4981,19 @@ const ScrapCanvas = {
 
     const btnPause = document.getElementById('btn-story-reel-pause');
     if (btnPause) {
-      btnPause.addEventListener('click', () => this.toggleStoryReelPause());
+      let lastTapTime = 0;
+      const handlePauseTap = (e) => {
+        const now = Date.now();
+        if (now - lastTapTime < 300) return;
+        lastTapTime = now;
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        this.toggleStoryReelPause();
+      };
+      btnPause.addEventListener('click', handlePauseTap);
+      btnPause.addEventListener('touchstart', handlePauseTap, { passive: false });
     }
 
     const btnNext = document.getElementById('btn-story-reel-next');
@@ -5039,6 +5084,12 @@ const ScrapCanvas = {
     this.bgMusicIsMuted = true;
     const musicIcon = document.getElementById('story-music-icon');
     if (musicIcon) musicIcon.textContent = '🔇';
+
+    const btnPause = document.getElementById('btn-story-reel-pause');
+    if (btnPause) {
+      btnPause.textContent = '⏸ Pause';
+    }
+
     this.storyReelLoadToken++;
 
     const modal = document.getElementById('story-reel-modal');
@@ -5058,6 +5109,14 @@ const ScrapCanvas = {
     if (modal) modal.classList.add('hidden');
     document.body.classList.remove('story-reel-active');
     this.storyReelLoadToken++;
+
+    // Instantly release photo base64 image data from RAM
+    const imgEl = document.getElementById('story-reel-img');
+    if (imgEl) {
+      imgEl.src = '';
+      imgEl.removeAttribute('src');
+    }
+    this.storyReelItems = [];
 
     if (this.storyReelTimer) {
       clearInterval(this.storyReelTimer);
@@ -5243,9 +5302,9 @@ const ScrapCanvas = {
 
   toggleStoryReelPause() {
     this.storyReelIsPaused = !this.storyReelIsPaused;
-    const btnPause = document.getElementById('story-reel-pause-icon') || document.getElementById('btn-story-reel-pause');
+    const btnPause = document.getElementById('btn-story-reel-pause');
     if (btnPause) {
-      btnPause.textContent = this.storyReelIsPaused ? '▶ Play' : '⏸ Pause';
+      btnPause.textContent = this.storyReelIsPaused ? '▶ Resume' : '⏸ Pause';
     }
   },
 
@@ -5361,4 +5420,11 @@ const ScrapCanvas = {
     }
   }
 };
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (ScrapCanvas && typeof ScrapCanvas.initStoryReelEvents === 'function') {
+    ScrapCanvas.initStoryReelEvents();
+  }
+});
+
 window.ScrapCanvas = ScrapCanvas;
