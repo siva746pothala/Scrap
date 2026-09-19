@@ -9,7 +9,7 @@
  */
 
 // Set to true to disable console logs in production/release mode
-const DISABLE_LOGS = true;
+const DISABLE_LOGS = false;
 if (DISABLE_LOGS) {
   console.log = function () { };
   console.debug = function () { };
@@ -1813,6 +1813,20 @@ const ScrapApp = {
         if (window.ScrapNotifications) ScrapNotifications.init();
       } catch (_) { }
 
+      // Listen for Capacitor App state changes (minimised/background/resume)
+      try {
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+          window.Capacitor.Plugins.App.addListener('appStateChange', (state) => {
+            console.log('[ScrapApp] App state changed. isActive:', state.isActive);
+            if (window.ScrapFirebase && typeof ScrapFirebase.flushPendingSyncQueue === 'function') {
+              ScrapFirebase.flushPendingSyncQueue();
+            }
+          });
+        }
+      } catch (appErr) {
+        console.warn('[ScrapApp] App listener init error:', appErr);
+      }
+
       // Subscribe to real-time updates for rooms to trigger badge blink
       if (window.pb && pb.authStore.isValid) {
         try {
@@ -3533,7 +3547,7 @@ const ScrapApp = {
                   path: `${cleanTitle}_canvas.png`,
                   directory: 'CACHE'
                 });
-              } catch (_) {}
+              } catch (_) { }
             }
           }, 1500);
         }
@@ -4055,10 +4069,6 @@ const ScrapApp = {
         const saveVoiceToCanvas = async (audioBlob, durationMs, typeArg, labelTitle) => {
           const progressToast = document.getElementById('upload-progress-notification');
           const progressText = document.getElementById('upload-progress-text');
-          if (progressToast && progressText) {
-            progressText.innerText = 'Uploading Voice...';
-            progressToast.classList.remove('hidden');
-          }
 
           try {
             const arrayBuffer = await audioBlob.arrayBuffer();
@@ -4092,11 +4102,15 @@ const ScrapApp = {
               else if (audioBlob.type.includes('m4a')) fileExt = 'm4a';
             }
             const mimeType = audioBlob.type || 'audio/mp4';
-            const uploadResult = await ScrapDrive.uploadFile(`voice_${Date.now()}.${fileExt}`, encBuf, roomFolderId, mimeType);
-            if (!uploadResult || !uploadResult.id) {
-              throw new Error('Failed to upload voice note to Google Drive / R2.');
-            }
-            const audioFileId = uploadResult.id;
+            const timestamp = Date.now();
+            const username = (window.pb && pb.authStore.isValid && pb.authStore.model)
+              ? (pb.authStore.model.username || pb.authStore.model.name || pb.authStore.model.id)
+              : (window.ScrapFirebase && window.ScrapFirebase.userName) || 'squadmate';
+            const safeUsername = username.toLowerCase().replace(/[^a-z0-9_.]/g, '');
+            const fileName = `${safeUsername}_voice_${timestamp}.${fileExt}`;
+
+            // 1. Write binary buffer to native disk cache first for instant local availability
+            await ScrapDrive.writeLocalCacheFile(fileName, encBuf);
 
             let x = 2444; // default center of 5000x5000 board
             let y = 2460;
@@ -4119,16 +4133,18 @@ const ScrapApp = {
             if (isNaN(y) || y < 0 || y > 5000) y = 2460;
 
             const isMusic = typeArg === 'music';
-            const elementId = isMusic ? 'music_' + Date.now() : 'voice_' + Date.now();
+            const elementId = (isMusic ? 'music_' : 'voice_') + timestamp;
             const elementType = isMusic ? 'music' : 'voice';
 
             const voiceElement = {
               type: elementType,
-              audioFileId: audioFileId, // Reference to Google Drive / R2 file
-              mimeType: audioBlob.type || 'audio/mp4',
+              audioFileId: fileName,
+              _pendingFileName: fileName,
+              _isPendingSync: true,
+              mimeType: mimeType,
               duration: durationMs,
               encrypted: isEncrypted,
-              createdAt: Date.now(),
+              createdAt: timestamp,
               x, y,
               rotation: Math.floor(Math.random() * 16) - 8,
               scale: 1.0,
@@ -4144,9 +4160,31 @@ const ScrapApp = {
             if (progressToast) {
               progressToast.classList.add('hidden');
             }
+
+            // 2. Stream to Cloudflare R2 silently in background without screen-blocking toasts
+            const uploadResult = await ScrapDrive.uploadFile(
+              fileName,
+              encBuf,
+              roomFolderId,
+              mimeType
+            );
+
+            if (uploadResult && uploadResult.id) {
+              const currentEl = ScrapFirebase.elements[elementId];
+              if (currentEl) {
+                currentEl.audioFileId = uploadResult.id;
+                delete currentEl._pendingFileName;
+                delete currentEl._isPendingSync;
+                ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+                if (ScrapFirebase.onElementsUpdateCallback) {
+                  ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+                }
+                ScrapFirebase.debounceSync();
+              }
+            }
           } catch (e) {
             console.error('[Drive Sync] Failed to upload audio recording:', e);
-            alert('Failed to upload audio to Google Drive: ' + e.message);
+            alert('Failed to save voice note: ' + e.message);
             if (progressToast) {
               progressToast.classList.add('hidden');
             }
@@ -5158,6 +5196,7 @@ const ScrapApp = {
 
     // Capture screen split sectors
     document.getElementById('btn-sector-snap').addEventListener('click', async () => {
+      this.showScreen('screen-canvas');
       const isNative = window.Capacitor && window.Capacitor.isNativePlatform();
       if (isNative && window.Capacitor.Plugins && window.Capacitor.Plugins.Camera) {
         await this.captureNativePhoto();
@@ -5167,6 +5206,7 @@ const ScrapApp = {
     });
 
     document.getElementById('btn-sector-dump').addEventListener('click', async () => {
+      this.showScreen('screen-canvas');
       await this.pickNativePhotoFromLibrary();
     });
 
@@ -5175,9 +5215,18 @@ const ScrapApp = {
       hiddenFilePicker.addEventListener('click', () => {
         this.isSelectingFile = true;
       });
-      hiddenFilePicker.addEventListener('change', (e) => {
-        if (e.target.files && e.target.files[0]) {
-          this.processCapturedFile(e.target.files[0]);
+      hiddenFilePicker.addEventListener('change', async (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          const files = Array.from(e.target.files).slice(0, 10);
+          if (e.target.files.length > 10) {
+            if (window.ScrapDialog && typeof window.ScrapDialog.alert === 'function') {
+              window.ScrapDialog.alert('Maximum 10 photos allowed at a time. The first 10 selected photos will be uploaded.');
+            }
+          }
+          for (const file of files) {
+            await this.processCapturedFile(file);
+          }
+          e.target.value = ''; // Reset input so re-selecting same files triggers change event
         }
       });
     }
@@ -5849,43 +5898,49 @@ const ScrapApp = {
     this.isSelectingFile = true;
     try {
       const cameraPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Camera;
-      if (cameraPlugin) {
-        const image = await cameraPlugin.getPhoto({
+      if (cameraPlugin && typeof cameraPlugin.pickImages === 'function') {
+        const result = await cameraPlugin.pickImages({
           quality: 85,
-          allowEditing: false,
-          resultType: 'base64',
-          source: 'PHOTOS' // Directly triggers native photo gallery picker
+          limit: 10
         });
 
-        if (image && image.base64String) {
-          const byteCharacters = atob(image.base64String);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        if (result && result.photos && result.photos.length > 0) {
+          const selectedPhotos = result.photos.slice(0, 10);
+          for (const photo of selectedPhotos) {
+            try {
+              let blob;
+              if (photo.webPath) {
+                const response = await fetch(photo.webPath);
+                blob = await response.blob();
+              } else if (photo.path) {
+                const response = await fetch(window.Capacitor.convertFileSrc(photo.path));
+                blob = await response.blob();
+              }
+              if (blob) {
+                const file = new File([blob], `dump_${Date.now()}_${Math.random().toString(36).substr(2, 4)}.jpg`, { type: 'image/jpeg' });
+                await this.processCapturedFile(file);
+              }
+            } catch (pErr) {
+              console.warn('[Camera] Failed to load picked photo item:', pErr);
+            }
           }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: 'image/jpeg' });
-          const file = new File([blob], `dump_${Date.now()}.jpg`, { type: 'image/jpeg' });
-          await this.processCapturedFile(file);
+          return;
         }
-      } else {
-        document.getElementById('hidden-file-picker').click();
       }
+      // Fallback to HTML input multi-file picker
+      document.getElementById('hidden-file-picker').click();
     } catch (err) {
       console.warn('[Camera] Native gallery picker error/cancelled, falling back to input:', err);
+      if (err && err.message && err.message.includes('User cancelled')) return;
       document.getElementById('hidden-file-picker').click();
     }
   },
 
   // Process captured image
   async processCapturedFile(file) {
-    // Show progress spinner immediately
+    // Ensure progress spinner toast is hidden - uploads stream silently in background
     const progressToast = document.getElementById('upload-progress-notification');
-    const progressText = document.getElementById('upload-progress-text');
-    if (progressToast && progressText) {
-      progressText.innerText = 'Processing & Moderating...';
-      progressToast.classList.remove('hidden');
-    }
+    if (progressToast) progressToast.classList.add('hidden');
 
     // Restore room context if lost due to OS background process termination
     if (!this.currentRoomId) {
@@ -5967,11 +6022,7 @@ const ScrapApp = {
         throw new Error('Decryption key for this room is missing. Please re-join the room.');
       }
 
-      // Get ArrayBuffer from downscaled canvas
       try {
-        if (progressText) {
-          progressText.innerText = 'Uploading Photo...';
-        }
 
         // Helper function to compress canvas to blob <= 200KB safely without freezing UI
         const compressToBlob = async (initialCanvas) => {
@@ -6022,27 +6073,13 @@ const ScrapApp = {
           const arrayBuffer = await blob.arrayBuffer();
           const encryptedBuffer = await ScrapCrypto.encryptData(arrayBuffer, roomKey);
 
-          // Upload encrypted buffer directly to Google Drive
-          const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
-          const uploadResult = await ScrapDrive.uploadFile(`photo_${Date.now()}.enc`, encryptedBuffer, roomFolderId);
-          if (!uploadResult || !uploadResult.id) {
-            throw new Error('Failed to upload file to Google Drive.');
-          }
-          const fileId = uploadResult.id;
-
           // Calculate auto-stacking position
-          let newX = 2412; // center x of 5000x5000 board (approx. 2500 - 88)
-          let newY = 2400; // center y of 5000x5000 board (approx. 2500 - 100)
+          let newX = 2412;
+          let newY = 2400;
 
           let currentElements = ScrapCanvas.elements;
           if (!currentElements || Object.keys(currentElements).length === 0) {
             currentElements = ScrapFirebase.getLocalRoomData(this.currentRoomId, 'elements') || {};
-            if (Object.keys(currentElements).length === 0) {
-              try {
-                const cached = localStorage.getItem(`scrap_elements_cache_${this.currentRoomId}`);
-                if (cached) currentElements = JSON.parse(cached);
-              } catch (e) { }
-            }
           }
 
           const photos = Object.values(currentElements || {}).filter(
@@ -6050,7 +6087,6 @@ const ScrapApp = {
           );
 
           if (photos.length > 0) {
-            // Sort photos by y coordinate descending to find lowest/bottom-most
             photos.sort((a, b) => (Number(b.y) || 0) - (Number(a.y) || 0));
             const lowestPhoto = photos[0];
             newX = Number(lowestPhoto.x);
@@ -6059,22 +6095,38 @@ const ScrapApp = {
             if (isNaN(newY)) {
               newY = 2400;
             } else {
-              newY = newY + 310; // 310px spacing for larger polaroid height + gap
+              newY = newY + 310;
             }
           } else {
-            // Place first photo exactly at absolute center of the infinite board
             newX = 2412;
             newY = 2400;
           }
 
-          // Ensure no NaNs propagate
           if (isNaN(newX)) newX = 2412;
           if (isNaN(newY)) newY = 2400;
 
-          const elementId = 'photo_' + Date.now();
+          const timestamp = Date.now();
+          const elementId = 'photo_' + timestamp;
+          const username = (window.pb && pb.authStore.isValid && pb.authStore.model)
+            ? (pb.authStore.model.username || pb.authStore.model.name || pb.authStore.model.id)
+            : (window.ScrapFirebase && window.ScrapFirebase.userName) || 'squadmate';
+          const safeUsername = username.toLowerCase().replace(/[^a-z0-9_.]/g, '');
+          const fileName = `${safeUsername}_photo_${timestamp}.enc`;
+
+          // 1. Write binary buffer to native disk cache first (awaited so local read hits immediately)
+          await ScrapDrive.writeLocalCacheFile(fileName, encryptedBuffer);
+
+          // 2. Cache in-memory data URL immediately so canvas renders with zero network lag/404s
+          const base64Decrypted = ScrapCrypto.arrayBufferToBase64(arrayBuffer);
+          const memoryDataUrl = `data:image/jpeg;base64,${base64Decrypted}`;
+
+          // 3. Save element metadata to disk FIRST with _isPendingSync: true & _decryptedDataUrl ready
           const metadata = {
             type: 'photo',
-            fileId: fileId,
+            fileId: fileName,
+            _pendingFileName: fileName,
+            _isPendingSync: true,
+            _decryptedDataUrl: memoryDataUrl,
             x: newX,
             y: newY,
             rotation: Math.floor(Math.random() * 20) - 10,
@@ -6085,13 +6137,40 @@ const ScrapApp = {
 
           window.pendingScrollToElementId = elementId;
           await ScrapFirebase.saveElement(this.currentRoomId, elementId, metadata);
+
           if (window.ScrapCanvas && typeof ScrapCanvas.checkFirstPhotoTip === 'function') {
             setTimeout(() => ScrapCanvas.checkFirstPhotoTip(ScrapCanvas.elements), 150);
           }
 
-        } catch (err) {
+          // 3. Initiate background upload to Cloudflare R2 silently in background
+          const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
+          const uploadResult = await ScrapDrive.uploadFile(
+            fileName,
+            encryptedBuffer,
+            roomFolderId,
+            'application/octet-stream'
+          );
 
-          alert('Photo Upload Failed: ' + err.message);
+          if (uploadResult && uploadResult.id) {
+            const currentEl = ScrapFirebase.elements[elementId];
+            if (currentEl) {
+              currentEl.fileId = uploadResult.id;
+              delete currentEl._pendingFileName;
+              delete currentEl._isPendingSync;
+              ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+              if (ScrapFirebase.onElementsUpdateCallback) {
+                ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+              }
+              ScrapFirebase.debounceSync();
+            }
+          }
+
+        } catch (err) {
+          if (err && err.message && (err.message.toLowerCase().includes('cancel') || err.message.toLowerCase().includes('abort'))) {
+            console.log('[Upload] User cancelled upload operation.');
+          } else {
+            console.warn('[Upload] Photo upload error:', err);
+          }
         } finally {
           // Hide progress spinner toast
           const progressToast = document.getElementById('upload-progress-notification');
@@ -6101,7 +6180,11 @@ const ScrapApp = {
         // Hide progress spinner toast
         const progressToast = document.getElementById('upload-progress-notification');
         if (progressToast) progressToast.classList.add('hidden');
-        alert('Canvas Processing Error: ' + err.message);
+        if (err && err.message && (err.message.toLowerCase().includes('cancel') || err.message.toLowerCase().includes('abort'))) {
+          console.log('[Canvas Processing] User cancelled operation.');
+        } else {
+          console.warn('[Canvas Processing] Error:', err);
+        }
       }
     };
 
@@ -6127,13 +6210,7 @@ const ScrapApp = {
       return;
     }
 
-    // Show progress spinner
     const progressToast = document.getElementById('upload-progress-notification');
-    const progressText = document.getElementById('upload-progress-text');
-    if (progressToast && progressText) {
-      progressText.innerText = 'Encrypting & Uploading Video...';
-      progressToast.classList.remove('hidden');
-    }
 
     try {
       // 1. Read array buffer
@@ -6156,22 +6233,24 @@ const ScrapApp = {
         encBuf = arrayBuffer;
       }
 
-      // 3. Upload to Google Drive room folder / Cloudflare R2
       const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
       let fileExt = isEncrypted ? 'enc' : 'mp4';
       if (!isEncrypted && file.type && file.type.includes('webm')) {
         fileExt = 'webm';
       }
-      const fileName = `video_${Date.now()}.${fileExt}`;
+      const timestamp = Date.now();
+      const username = (window.pb && pb.authStore.isValid && pb.authStore.model)
+        ? (pb.authStore.model.username || pb.authStore.model.name || pb.authStore.model.id)
+        : (window.ScrapFirebase && window.ScrapFirebase.userName) || 'squadmate';
+      const safeUsername = username.toLowerCase().replace(/[^a-z0-9_.]/g, '');
+      const fileName = `${safeUsername}_video_${timestamp}.${fileExt}`;
       const mimeType = file.type || 'video/mp4';
-      const uploadResult = await ScrapDrive.uploadFile(fileName, encBuf, roomFolderId, mimeType);
 
-      if (!uploadResult || !uploadResult.id) {
-        throw new Error('Failed to upload video file.');
-      }
+      // 3. Write binary buffer to native disk cache first for instant local rendering
+      await ScrapDrive.writeLocalCacheFile(fileName, encBuf);
 
-      // 4. Save metadata to Firebase / PocketBase
-      const elementId = 'video_' + Date.now();
+      // 4. Save metadata to Firebase / PocketBase immediately with _isPendingSync & _pendingFileName
+      const elementId = 'video_' + timestamp;
 
       // Calculate centering position on canvas
       let x = 2444;
@@ -6195,7 +6274,9 @@ const ScrapApp = {
 
       const videoElement = {
         type: 'video',
-        videoFileId: uploadResult.id,
+        videoFileId: fileName,
+        _pendingFileName: fileName,
+        _isPendingSync: true,
         encrypted: isEncrypted,
         mimeType: mimeType,
         x: x,
@@ -6209,6 +6290,30 @@ const ScrapApp = {
 
       window.pendingScrollToElementId = null; // Prevent auto-scroll jump
       await ScrapFirebase.saveElement(this.currentRoomId, elementId, videoElement);
+
+      if (progressToast) progressToast.classList.add('hidden');
+
+      // 5. Stream video to Cloudflare R2 silently in background without blocking UI
+      const uploadResult = await ScrapDrive.uploadFile(
+        fileName,
+        encBuf,
+        roomFolderId,
+        mimeType
+      );
+
+      if (uploadResult && uploadResult.id) {
+        const currentEl = ScrapFirebase.elements[elementId];
+        if (currentEl) {
+          currentEl.videoFileId = uploadResult.id;
+          delete currentEl._pendingFileName;
+          delete currentEl._isPendingSync;
+          ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+          if (ScrapFirebase.onElementsUpdateCallback) {
+            ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+          }
+          ScrapFirebase.debounceSync();
+        }
+      }
     } catch (err) {
       console.error('[Video] Capture/Upload failed:', err);
       await window.ScrapDialog.alert('Failed to save video sticker: ' + err.message);
@@ -6589,6 +6694,15 @@ const ScrapApp = {
     if (label) label.textContent = '⏸ Stop Beat';
   },
 
+  updateUploadProgress(percent, text) {
+    const progressToast = document.getElementById('upload-progress-notification');
+    const progressText = document.getElementById('upload-progress-text');
+    const progressPercent = document.getElementById('upload-progress-percent');
+    if (progressToast) progressToast.classList.remove('hidden');
+    if (progressText && text) progressText.innerText = text;
+    if (progressPercent) progressPercent.innerText = `${percent}%`;
+  },
+
   async renderDashboardRooms() {
     if (this._isRenderingDashboardRooms) return;
     this._isRenderingDashboardRooms = true;
@@ -6633,7 +6747,7 @@ const ScrapApp = {
                 avatarPlaceholder.classList.add('hidden');
               }
             }
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
 
@@ -6808,9 +6922,9 @@ const ScrapApp = {
               <div class="relative w-12 h-12 flex-shrink-0 btn-preview-avatar animate-fade-in" data-title="${safeTitle}" data-avatar-url="${avatarUrl}" data-color="${colorHex}" data-room-id="${r.id}" data-owner="${isOwner}">
                 <div class="w-12 h-12 rounded-full bg-black/40 flex items-center justify-center border font-mono font-bold text-sm uppercase overflow-hidden transition-transform duration-200 active:scale-95" style="color: ${colorHex}; border-color: ${colorHex}45;">
                   ${avatarUrl
-                    ? `<img src="${avatarUrl}" class="w-full h-full object-cover">`
-                    : safeTitle.substring(0, 2).toUpperCase()
-                  }
+              ? `<img src="${avatarUrl}" class="w-full h-full object-cover">`
+              : safeTitle.substring(0, 2).toUpperCase()
+            }
                 </div>
               </div>
               <div>
@@ -7798,7 +7912,7 @@ const ScrapApp = {
               const viewBottom = targetTop + wsHeight;
 
               return (elRight >= viewLeft - 100 && elLeft <= viewRight + 100 &&
-                      elBottom >= viewTop - 100 && elTop <= viewBottom + 100);
+                elBottom >= viewTop - 100 && elTop <= viewBottom + 100);
             });
 
             if (isAnyItemInView) {

@@ -67,17 +67,22 @@ const ScrapFirebase = {
 
   saveLocalRoomData(roomId, type, data) {
     try {
+      let cleanData = data;
       if (type === 'elements' && data && typeof data === 'object') {
-        const cleanData = {};
+        cleanData = {};
         for (const [k, el] of Object.entries(data)) {
           if (!el) continue;
           const { _decryptedDataUrl, _decryptedSrc, _decryptedStrokes, ...rest } = el;
           cleanData[k] = rest;
         }
-        localStorage.setItem(`scrap_local_${type}_${roomId}`, JSON.stringify(cleanData));
-        return;
       }
-      localStorage.setItem(`scrap_local_${type}_${roomId}`, JSON.stringify(data));
+      const strValue = JSON.stringify(cleanData);
+      const storageKey = `scrap_local_${type}_${roomId}`;
+      if (window.ScrapStorage && typeof window.ScrapStorage.set === 'function') {
+        window.ScrapStorage.set(storageKey, strValue).catch(() => {});
+      } else {
+        localStorage.setItem(storageKey, strValue);
+      }
     } catch (e) {
       try {
         for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -91,7 +96,8 @@ const ScrapFirebase = {
   },
 
   getLocalRoomData(roomId, type) {
-    const val = localStorage.getItem(`scrap_local_${type}_${roomId}`);
+    const storageKey = `scrap_local_${type}_${roomId}`;
+    const val = localStorage.getItem(storageKey);
     try {
       return val ? JSON.parse(val) : null;
     } catch (e) {
@@ -102,7 +108,16 @@ const ScrapFirebase = {
   async saveElement(roomId, elementId, data) {
     if (!this.knownElementIds) this.knownElementIds = new Set();
     this.knownElementIds.add(elementId);
+
+    // Register timestamp in ScrapCanvas.lastLocalEditTimes to protect against real-time purge
+    if (window.ScrapCanvas) {
+      if (!window.ScrapCanvas.lastLocalEditTimes) window.ScrapCanvas.lastLocalEditTimes = {};
+      window.ScrapCanvas.lastLocalEditTimes[elementId] = Date.now();
+    }
+
     const existing = this.elements[elementId];
+    const isPendingMediaUpload = data._pendingFileName || (existing && existing._pendingFileName) || (data._isPendingSync && (!existing || existing._isPendingSync));
+
     const payload = {
       ...data,
       id: elementId,
@@ -111,6 +126,12 @@ const ScrapFirebase = {
       ownerId: this.userId,
       ownerName: this.getMemberDisplayName(this.userId, data)
     };
+
+    if (isPendingMediaUpload) {
+      payload._isPendingSync = true;
+    } else {
+      delete payload._isPendingSync;
+    }
 
     this.elements[elementId] = payload;
     this.saveLocalRoomData(roomId, 'elements', this.elements);
@@ -161,6 +182,16 @@ const ScrapFirebase = {
   },
 
   async deleteElement(roomId, elementId) {
+    if (!this.deletedElementIds) this.deletedElementIds = {};
+    this.deletedElementIds[elementId] = Date.now();
+
+    if (window.ScrapCanvas && window.ScrapCanvas.lastLocalEditTimes) {
+      delete window.ScrapCanvas.lastLocalEditTimes[elementId];
+    }
+    const el = this.elements[elementId];
+    if (el && el._pendingFileName && window.ScrapDrive) {
+      ScrapDrive.deleteLocalCacheFile(el._pendingFileName).catch(() => {});
+    }
     delete this.elements[elementId];
     this.saveLocalRoomData(roomId, 'elements', this.elements);
 
@@ -263,15 +294,52 @@ const ScrapFirebase = {
     } catch (e) { }
   },
 
+  debounceSync() {
+    if (this.syncTimeout) {
+      clearTimeout(this.syncTimeout);
+    }
+    this.syncTimeout = setTimeout(() => {
+      this.syncBoardToPocketBase().catch(console.error);
+    }, 400);
+  },
+
   async syncBoardToPocketBase() {
     this.syncTimeout = null;
-    if (!window.pb || !pb.authStore.isValid) return;
+    if (!window.pb || !pb.authStore.isValid || !this.roomId) return;
+
+    // Safety Guard 1: Do NOT push to PocketBase if initial room load hasn't completed
+    if (!this.isInitialLoadDone) {
+      console.warn('[PocketBase Sync] Room initial load in progress. Guarding against accidental room state overwrite.');
+      return;
+    }
+
+    // Safety Guard 2: If local elements map is empty, restore from disk cache or abort
+    if (!this.elements || Object.keys(this.elements).length === 0) {
+      const cachedElements = this.getLocalRoomData(this.roomId, 'elements');
+      if (cachedElements && Object.keys(cachedElements).length > 0) {
+        this.elements = cachedElements;
+      } else {
+        console.warn('[PocketBase Sync] Local elements map is empty. Aborting sync to prevent room data wipe.');
+        return;
+      }
+    }
 
     this.isSyncingInProgress = true;
 
     const dateStr = window.ScrapApp.currentDate || new Date().toISOString().split('T')[0];
+    
+    // Strip heavy transient in-memory properties (like base64 data URLs) before JSON sync to prevent HTTP 400 payload body size overflow
+    const sanitizedElements = {};
+    if (this.elements) {
+      for (const [key, el] of Object.entries(this.elements)) {
+        if (!el) continue;
+        const { _decryptedDataUrl, ...cleanEl } = el;
+        sanitizedElements[key] = cleanEl;
+      }
+    }
+
     const canvasState = {
-      elements: this.elements,
+      elements: sanitizedElements,
       connections: this.connections
     };
 
@@ -297,9 +365,49 @@ const ScrapFirebase = {
         this.currentBoardRecordId = record.id;
       }
       this.currentBoardMedia = record.media || [];
+
+      // Clear _isPendingSync flags upon successful server acknowledgement
+      let elementsChanged = false;
+      for (const el of Object.values(this.elements)) {
+        if (el && el._isPendingSync) {
+          delete el._isPendingSync;
+          elementsChanged = true;
+        }
+      }
+      if (elementsChanged) {
+        this.saveLocalRoomData(this.roomId, 'elements', this.elements);
+      }
+
+      this.syncRetryCount = 0;
       console.log('[PocketBase Sync] Board successfully synced (JSON state only)');
     } catch (err) {
       console.error('[PocketBase Sync] Failed to sync board state:', err);
+
+      // Bounded retry logic (No infinite loops!)
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        console.log('[PocketBase Sync] Network is offline. Pausing retry queue until online event.');
+        return;
+      }
+
+      this.syncRetryCount = (this.syncRetryCount || 0) + 1;
+      if (this.syncRetryCount <= 5) {
+        const delay = Math.min(60000, Math.pow(2, this.syncRetryCount) * 1000);
+        console.log(`[PocketBase Sync] Scheduling retry #${this.syncRetryCount} in ${delay}ms...`);
+        setTimeout(() => {
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            this.syncBoardToPocketBase().catch(console.error);
+          }
+        }, delay);
+      } else if (this.syncRetryCount <= 10) {
+        console.log('[PocketBase Sync] Cool-down mode: Scheduling retry in 5 minutes...');
+        setTimeout(() => {
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            this.syncBoardToPocketBase().catch(console.error);
+          }
+        }, 300000);
+      } else {
+        console.warn('[PocketBase Sync] Max active retries reached. Background retries paused until network event or manual trigger.');
+      }
     } finally {
       this.isSyncingInProgress = false;
     }
@@ -373,8 +481,52 @@ const ScrapFirebase = {
 
       if (record.board_state) {
         const state = typeof record.board_state === 'string' ? JSON.parse(record.board_state) : record.board_state;
-        this.elements = state.elements || {};
-        this.connections = state.connections || {};
+        const serverElements = (state && state.elements) || {};
+        const serverConnections = (state && state.connections) || {};
+
+        // Merge server elements with existing local elements (preserving pending unsynced items)
+        const mergedElements = {};
+        for (const [id, serverEl] of Object.entries(serverElements)) {
+          const deletedTime = (this.deletedElementIds && this.deletedElementIds[id]) || 0;
+          if (deletedTime > 0 && Date.now() - deletedTime < 30000) {
+            continue;
+          }
+          mergedElements[id] = serverEl;
+        }
+        let hasPendingLocalItems = false;
+
+        for (const [id, localEl] of Object.entries(this.elements || {})) {
+          const deletedTime = (this.deletedElementIds && this.deletedElementIds[id]) || 0;
+          if (deletedTime > 0 && Date.now() - deletedTime < 30000) {
+            continue;
+          }
+          if (localEl && localEl._isPendingSync) {
+            mergedElements[id] = localEl;
+            hasPendingLocalItems = true;
+          } else {
+            const lastEdit = (window.ScrapCanvas && window.ScrapCanvas.lastLocalEditTimes && window.ScrapCanvas.lastLocalEditTimes[id]) || 0;
+            if (lastEdit > 0 && (Date.now() - lastEdit < 15000) && !serverElements[id]) {
+              mergedElements[id] = localEl;
+              hasPendingLocalItems = true;
+            }
+          }
+        }
+
+        this.elements = mergedElements;
+
+        const mergedConnections = { ...serverConnections };
+        for (const [id, localConn] of Object.entries(this.connections || {})) {
+          if (localConn && localConn._isPendingSync) {
+            mergedConnections[id] = localConn;
+            hasPendingLocalItems = true;
+          }
+        }
+        this.connections = mergedConnections;
+
+        if (hasPendingLocalItems) {
+          console.log('[PocketBase Load] Preserved pending local items. Triggering sync to update server record.');
+          this.debounceSync();
+        }
       }
 
       this.knownElementIds = new Set(Object.keys(this.elements));
@@ -570,6 +722,12 @@ const ScrapFirebase = {
           // Merge elements based on updatedAt timestamp
           let changed = false;
           for (const [id, serverEl] of Object.entries(serverElements)) {
+            // Block re-inserting elements that were deleted locally
+            const deletedTime = (this.deletedElementIds && this.deletedElementIds[id]) || 0;
+            if (deletedTime > 0 && Date.now() - deletedTime < 30000) {
+              continue;
+            }
+
             const isBrandNewElement = !this.knownElementIds.has(id);
             this.knownElementIds.add(id);
 
@@ -614,12 +772,16 @@ const ScrapFirebase = {
               changed = true;
             }
           }
-          // Purge deleted elements
+          // Strict User-Driven Deletion: NEVER delete an element from local or server UNLESS user explicitly deleted it
           for (const id of Object.keys(this.elements)) {
             if (!serverElements[id]) {
-              const lastEdit = (window.ScrapCanvas && window.ScrapCanvas.lastLocalEditTimes && window.ScrapCanvas.lastLocalEditTimes[id]) || 0;
-              if (Date.now() - lastEdit > 5000) {
+              const wasExplicitlyDeleted = this.deletedElementIds && this.deletedElementIds[id];
+              if (wasExplicitlyDeleted) {
                 delete this.elements[id];
+                changed = true;
+              } else {
+                // Keep local element and retain it so server never loses data
+                serverElements[id] = this.elements[id];
                 changed = true;
               }
             }
@@ -686,13 +848,26 @@ const ScrapFirebase = {
 
 
   async getUserRooms(userId) {
-    if (!window.pb || !pb.authStore.isValid) return [];
+    const targetUserId = userId || (window.pb && pb.authStore.isValid && pb.authStore.model && pb.authStore.model.id) || 'guest';
+    const cacheKey = 'scrap_user_rooms_cache_' + targetUserId;
+
+    if (!window.pb || !pb.authStore.isValid) {
+      try {
+        const cached = window.ScrapStorage && typeof window.ScrapStorage.get === 'function'
+          ? await window.ScrapStorage.get(cacheKey)
+          : localStorage.getItem(cacheKey);
+        return cached ? JSON.parse(cached) : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
     try {
       const records = await pb.collection('boards').getFullList({
         filter: `user = "${pb.authStore.model.id}" || members ~ "${pb.authStore.model.id}"`,
         sort: '-created'
       });
-      return records.map(r => ({
+      const roomList = records.map(r => ({
         id: r.id,
         title: r.title || 'Squad Space',
         createdBy: r.user || pb.authStore.model.id,
@@ -700,9 +875,26 @@ const ScrapFirebase = {
         avatar: r.avatar || '',
         encrypted_avatar: r.encrypted_avatar || ''
       }));
+
+      // Cache room list to Native Disk Storage for offline / weak mobile data support
+      const strVal = JSON.stringify(roomList);
+      if (window.ScrapStorage && typeof window.ScrapStorage.set === 'function') {
+        await window.ScrapStorage.set(cacheKey, strVal).catch(() => {});
+      } else {
+        localStorage.setItem(cacheKey, strVal);
+      }
+
+      return roomList;
     } catch (e) {
-      console.error('[PocketBase getUserRooms] Error:', e);
-      return [];
+      console.error('[PocketBase getUserRooms] Network Error, loading disk cached room list:', e);
+      try {
+        const cached = window.ScrapStorage && typeof window.ScrapStorage.get === 'function'
+          ? await window.ScrapStorage.get(cacheKey)
+          : localStorage.getItem(cacheKey);
+        return cached ? JSON.parse(cached) : [];
+      } catch (_) {
+        return [];
+      }
     }
   },
 
@@ -1099,6 +1291,201 @@ const ScrapFirebase = {
 
     try {
       const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
+      console.log(`[PocketBase removeMember] User ${userId} successfully removed from room ${roomId}`);
+    } catch (e) {
+      console.error('[PocketBase removeMember] Error:', e);
+      throw e;
+    }
+  },
+
+  getBlockedUsers() {
+    if (!window.pb || !pb.authStore.isValid || !pb.authStore.model) {
+      try {
+        return JSON.parse(localStorage.getItem('scrap_blocked_users') || '[]');
+      } catch (e) {
+        return [];
+      }
+    }
+    const blocked = pb.authStore.model.blocked || [];
+    localStorage.setItem('scrap_blocked_users', JSON.stringify(blocked));
+    return blocked;
+  },
+
+  async toggleBlockUser(targetUserId) {
+    if (!window.pb || !pb.authStore.isValid || !pb.authStore.model) {
+      throw new Error('Not authenticated with PocketBase.');
+    }
+    const currentBlocked = pb.authStore.model.blocked || [];
+    let updatedBlocked = [];
+    let isBlocking = false;
+    
+    if (currentBlocked.includes(targetUserId)) {
+      updatedBlocked = currentBlocked.filter(id => id !== targetUserId);
+    } else {
+      updatedBlocked = [...currentBlocked, targetUserId];
+      isBlocking = true;
+    }
+    
+    await pb.collection('users').update(pb.authStore.model.id, {
+      blocked: updatedBlocked
+    });
+    
+    pb.authStore.model.blocked = updatedBlocked;
+    localStorage.setItem('scrap_blocked_users', JSON.stringify(updatedBlocked));
+    
+    return isBlocking;
+  },
+
+  async compressImage(file, targetSizeKb = 50, maxDimension = 512) {
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+      return file;
+    }
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Resize if width or height exceeds maxDimension
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Iterate quality to meet the targetBytes size
+          let quality = 0.8;
+          const targetBytes = targetSizeKb * 1024;
+
+          const attemptExport = (q) => {
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                resolve(file);
+                return;
+              }
+              if (blob.size <= targetBytes || q <= 0.2) {
+                const nameWithoutExt = file.name ? file.name.replace(/\.[^/.]+$/, "") : "avatar";
+                const compressedFile = new File([blob], nameWithoutExt + ".jpg", {
+                  type: 'image/jpeg',
+                  lastModified: Date.now()
+                });
+                resolve(compressedFile);
+              } else {
+                attemptExport(q - 0.15);
+              }
+            }, 'image/jpeg', q);
+          };
+
+          attemptExport(quality);
+        };
+        img.onerror = () => resolve(file);
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  },
+
+  async getUserAvatarCryptoKey(targetUserId = null, roomId = null) {
+    // If a target user ID is provided (or current user logged in), personal avatars are encrypted with deterministic user key
+    const userId = targetUserId || (window.pb && pb.authStore.isValid && pb.authStore.model ? pb.authStore.model.id : null);
+    if (userId) {
+      const salt = new Uint8Array([115, 99, 114, 97, 112, 97, 118, 97]); // 'scrapava'
+      return await ScrapCrypto.deriveKeyFromPin(userId, salt);
+    }
+    let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+    if (roomKey && typeof roomKey === 'object' && roomKey.algorithm) return roomKey;
+    return null;
+  },
+
+  async getRoomAvatarCryptoKey(roomId) {
+    let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+    if (roomKey && typeof roomKey === 'object' && roomKey.algorithm) return roomKey;
+    return null;
+  },
+
+  async uploadRoomAvatar(roomId, file) {
+    if (!window.pb || !pb.authStore.isValid) {
+      throw new Error('Not authenticated with PocketBase.');
+    }
+    const compressedFile = await this.compressImage(file, 50, 512);
+    const formData = new FormData();
+    let dataUrl = '';
+
+    try {
+      const cryptoKey = await this.getRoomAvatarCryptoKey(roomId);
+      dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(compressedFile);
+      });
+      if (cryptoKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, cryptoKey);
+        formData.append('encrypted_avatar', encData);
+      }
+    } catch (cryptoErr) {
+      console.warn('[Avatar] Encryption error for room avatar:', cryptoErr);
+    }
+
+    const updatedRecord = await pb.collection('boards').update(roomId, formData);
+    return dataUrl || updatedRecord.encrypted_avatar;
+  },
+
+  async uploadUserAvatar(file) {
+    if (!window.pb || !pb.authStore.isValid || !pb.authStore.model) {
+      throw new Error('Not authenticated with PocketBase.');
+    }
+    const compressedFile = await this.compressImage(file, 50, 512);
+    const formData = new FormData();
+    let dataUrl = '';
+
+    try {
+      const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
+      const cryptoKey = await this.getUserAvatarCryptoKey(pb.authStore.model.id, roomId);
+      dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(compressedFile);
+      });
+      if (cryptoKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, cryptoKey);
+        formData.append('encrypted_avatar', encData);
+      }
+    } catch (cryptoErr) {
+      console.warn('[Avatar] Encryption error for user avatar:', cryptoErr);
+    }
+
+    const updatedRecord = await pb.collection('users').update(pb.authStore.model.id, formData);
+    if (updatedRecord.encrypted_avatar) {
+      pb.authStore.model.encrypted_avatar = updatedRecord.encrypted_avatar;
+    }
+    return dataUrl || updatedRecord.encrypted_avatar;
+  },
+
+  async uploadUserCustomBg(file) {
+    if (!window.pb || !pb.authStore.isValid || !pb.authStore.model) {
+      throw new Error('Not authenticated with PocketBase.');
+    }
+    const compressedFile = await this.compressImage(file, 200, 1920);
+    const formData = new FormData();
+    let dataUrl = '';
+
+    try {
+      const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
       const cryptoKey = await this.getUserAvatarCryptoKey(pb.authStore.model.id, roomId);
       dataUrl = await new Promise((resolve) => {
         const reader = new FileReader();
@@ -1132,7 +1519,56 @@ const ScrapFirebase = {
         timestamp: Date.now()
       });
     }
+  },
+
+  async flushPendingSyncQueue() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      console.log('[ScrapSync] Network is offline. Pausing queue flush.');
+      return;
+    }
+
+    this.syncRetryCount = 0;
+
+    // Scan elements for pending media binary uploads to Cloudflare R2
+    let updatedMedia = false;
+    for (const [id, el] of Object.entries(this.elements || {})) {
+      if (el && el._isPendingSync && el._pendingFileName && window.ScrapDrive) {
+        try {
+          console.log(`[ScrapSync] Resuming pending binary upload for element ${id}: ${el._pendingFileName}`);
+          const fileBuffer = await ScrapDrive.readLocalCacheFile(el._pendingFileName);
+          if (fileBuffer) {
+            const uploadRes = await ScrapDrive.uploadFile(el._pendingFileName, fileBuffer, this.roomId);
+            if (uploadRes && uploadRes.id) {
+              el.fileId = uploadRes.id;
+              delete el._pendingFileName;
+              delete el._isPendingSync;
+              updatedMedia = true;
+            }
+          }
+        } catch (mediaErr) {
+          console.warn(`[ScrapSync] Failed to resume upload for ${id}:`, mediaErr);
+        }
+      }
+    }
+
+    if (updatedMedia) {
+      this.saveLocalRoomData(this.roomId, 'elements', this.elements);
+      if (this.onElementsUpdateCallback) {
+        this.onElementsUpdateCallback(this.elements);
+      }
+    }
+
+    this.syncBoardToPocketBase().catch(console.error);
   }
 };
 
 window.ScrapFirebase = ScrapFirebase;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[ScrapNetwork] Network connection restored! Flushing pending sync queue...');
+    if (window.ScrapFirebase && typeof window.ScrapFirebase.flushPendingSyncQueue === 'function') {
+      window.ScrapFirebase.flushPendingSyncQueue();
+    }
+  });
+}

@@ -1044,7 +1044,7 @@
       </button>
     </div>
 
-    <input type="file" id="hidden-file-picker" accept="image/*" class="hidden">
+    <input type="file" id="hidden-file-picker" accept="image/*" multiple class="hidden">
     <input type="file" id="hidden-camera-picker" accept="image/*" capture="environment" class="hidden">
     <canvas id="hidden-downscaler-canvas" class="hidden"></canvas>
   </div>
@@ -1641,9 +1641,12 @@
   <div id="upload-progress-notification"
     class="hidden fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4">
     <div
-      class="bg-[#120921] border border-[#39ff14]/40 rounded-2xl px-6 py-5 flex flex-col items-center gap-4 shadow-2xl">
-      <div class="w-8 h-8 border-4 border-t-transparent border-[#39ff14] rounded-full animate-spin"></div>
-      <span id="upload-progress-text" class="text-[#39ff14] uppercase tracking-wider text-[10px] font-bold font-mono">
+      class="bg-[#120921] border border-[#39ff14]/40 rounded-2xl px-6 py-5 flex flex-col items-center gap-4 shadow-2xl min-w-[200px]">
+      <div class="relative w-12 h-12 flex items-center justify-center">
+        <div class="w-12 h-12 border-4 border-t-transparent border-[#39ff14] rounded-full animate-spin"></div>
+        <span id="upload-progress-percent" class="absolute text-[10px] font-bold font-mono text-[#39ff14]">0%</span>
+      </div>
+      <span id="upload-progress-text" class="text-[#39ff14] uppercase tracking-wider text-[10px] font-bold font-mono text-center">
         Uploading encrypted snap...</span>
     </div>
   </div>

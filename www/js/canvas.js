@@ -923,7 +923,10 @@ const ScrapCanvas = {
         this.stopDoodleSparkleLoop(id);
         domEl.remove();
         if (!incomingIds.includes(id)) {
-          delete this.elements[id];
+          const localEl = this.elements[id];
+          if (!localEl || !localEl._isPendingSync) {
+            delete this.elements[id];
+          }
         }
       }
     });
@@ -1477,8 +1480,8 @@ const ScrapCanvas = {
           </div>
         `;
 
-        // Lazy load and decrypt in memory
-        this.decryptAndDisplayImage(id, data.encryptedData || data.fileId, contentContainer);
+        // Lazy load and display/decrypt in memory
+        this.decryptAndDisplayImage(id, data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl, contentContainer);
       } else {
         // If already rendered, apply updated border style if changed
         const polaroidWrapper = contentContainer.querySelector('.polaroid-wrapper');
@@ -2315,7 +2318,26 @@ const ScrapCanvas = {
     }
 
     this.updateElementStyle(id, data);
+    this.updateSyncBadgeDom(domEl, data);
     this.applyCollageFlowFilterSingle(domEl, data);
+  },
+
+  updateSyncBadgeDom(domEl, data) {
+    if (!domEl || !data) return;
+    let badgeEl = domEl.querySelector('.sync-status-badge');
+
+    if (data._isPendingSync) {
+      if (!badgeEl) {
+        badgeEl = document.createElement('div');
+        badgeEl.className = 'sync-status-badge absolute -top-2 -right-2 z-40 pointer-events-none transition-all duration-300';
+        domEl.appendChild(badgeEl);
+      }
+      badgeEl.innerHTML = `<span class="bg-[#120921]/90 text-yellow-400 border border-yellow-400/50 w-5 h-5 rounded-full text-[10px] flex items-center justify-center shadow-lg animate-pulse" title="Pending Sync (Saved locally)">🕒</span>`;
+      badgeEl.classList.remove('hidden', 'opacity-0');
+    } else if (badgeEl) {
+      badgeEl.innerHTML = '';
+      badgeEl.classList.add('hidden');
+    }
   },
 
   // Polaroid border CSS definitions
@@ -2395,56 +2417,97 @@ const ScrapCanvas = {
 
     // Queue decryptions sequentially to prevent concurrent Web Crypto thread race conditions
     this.decryptQueue = this.decryptQueue.then(async () => {
+      const liveEl = document.getElementById(`element-${id}`) || container;
+      const img = liveEl ? liveEl.querySelector('img') : null;
+      const loader = liveEl ? liveEl.querySelector('.loading-label') : null;
+      const elData = (this.elements && this.elements[id]) ? this.elements[id] : {};
+
+      // 1. Direct Image URL / Local Cache / R2 Filename Check
+      let directUrl = elData._decryptedDataUrl || elData.url || elData.localPath || elData.src || elData.dataUrl;
+
+      const targetRef = (typeof encryptedDataOrFileId === 'string' && encryptedDataOrFileId.trim())
+        ? encryptedDataOrFileId.trim()
+        : (elData.fileId || elData._pendingFileName || '');
+
+      if (!directUrl && targetRef) {
+        if (
+          targetRef.startsWith('http:') ||
+          targetRef.startsWith('https:') ||
+          targetRef.startsWith('data:') ||
+          targetRef.startsWith('file:') ||
+          targetRef.startsWith('cdvfile:') ||
+          targetRef.startsWith('capacitor:')
+        ) {
+          directUrl = targetRef;
+        }
+      }
+
+      if (directUrl) {
+        if (this.elements && this.elements[id]) {
+          this.elements[id]._decryptedDataUrl = directUrl;
+        }
+        if (img) {
+          img.src = directUrl;
+          img.classList.remove('hidden');
+        }
+        if (loader) {
+          loader.classList.add('hidden');
+        }
+        if (this.storyReelItems && this.storyReelItems[this.storyReelIndex] &&
+          this.storyReelItems[this.storyReelIndex].id === id) {
+          const reelImg = document.getElementById('story-reel-img');
+          if (reelImg) reelImg.src = directUrl;
+        }
+        return;
+      }
+
+      // 2. Encrypted Data / File ID Processing
       const getRoomId = () =>
         (window.ScrapApp && window.ScrapApp.currentRoomId) ||
         ScrapFirebase.roomId ||
         null;
 
-      const isFileId = encryptedDataOrFileId && encryptedDataOrFileId.length < 200;
-
+      const isFileId = targetRef && targetRef.length < 200;
 
       try {
-        if (!encryptedDataOrFileId) {
+        if (!targetRef) {
           throw new Error('No encrypted data or file ID provided.');
         }
 
         let encryptedBuffer;
         if (isFileId) {
-          // If it's a fileId, download it from drive (legacy support)
-
-          encryptedBuffer = await ScrapDrive.downloadFile(encryptedDataOrFileId);
+          encryptedBuffer = await ScrapDrive.downloadFile(targetRef);
         } else {
-          // Otherwise, it's a Base64 encryptedData string, decode it directly
-
-          encryptedBuffer = ScrapCrypto.base64ToArrayBuffer(encryptedDataOrFileId);
+          encryptedBuffer = ScrapCrypto.base64ToArrayBuffer(targetRef);
         }
 
-        // Attempt 1: get room key immediately
         let roomId = getRoomId();
         let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
 
-        // Retry once after 600ms — handles the race where saveRoomKey() is still
-        // mid-flight when the first Firebase poll fires and triggers rendering.
         if (!roomKey) {
-
           await new Promise(resolve => setTimeout(resolve, 600));
           roomId = getRoomId();
           roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
         }
 
-        if (!roomKey) {
-          throw new Error(`No Room Key for Room: ${roomId}. Key may not have been received via QR yet.`);
+        let url = '';
+        try {
+          if (roomKey && encryptedBuffer) {
+            const decrypted = await ScrapCrypto.decryptData(encryptedBuffer, roomKey);
+            const base64 = ScrapCrypto.arrayBufferToBase64(decrypted);
+            url = `data:image/jpeg;base64,${base64}`;
+          }
+        } catch (decErr) {
+          // If WebCrypto decryption failed, check if buffer is unencrypted raw image bytes
+          if (encryptedBuffer) {
+            const base64 = ScrapCrypto.arrayBufferToBase64(encryptedBuffer);
+            url = `data:image/jpeg;base64,${base64}`;
+          }
         }
 
-
-        const decrypted = await ScrapCrypto.decryptData(encryptedBuffer, roomKey);
-
-        const base64 = ScrapCrypto.arrayBufferToBase64(decrypted);
-        const url = `data:image/jpeg;base64,${base64}`;
-
-        const liveEl = document.getElementById(`element-${id}`) || container;
-        const img = liveEl ? liveEl.querySelector('img') : null;
-        const loader = liveEl ? liveEl.querySelector('.loading-label') : null;
+        if (!url) {
+          throw new Error('Could not decrypt or decode image buffer.');
+        }
 
         if (this.elements && this.elements[id]) {
           this.elements[id]._decryptedDataUrl = url;
@@ -2457,16 +2520,22 @@ const ScrapCanvas = {
           loader.classList.add('hidden');
         }
 
-        // The reel can open before decryption finishes. Keep its active slide in sync.
         if (this.storyReelItems && this.storyReelItems[this.storyReelIndex] &&
           this.storyReelItems[this.storyReelIndex].id === id) {
           const reelImg = document.getElementById('story-reel-img');
           if (reelImg) reelImg.src = url;
         }
       } catch (e) {
-        const liveEl = document.getElementById(`element-${id}`) || container;
-        const loader = liveEl ? liveEl.querySelector('.loading-label') : null;
-        if (loader) {
+        console.warn(`[decryptAndDisplayImage] Decryption fallback for photo ${id}:`, e);
+        const fallbackUrl = elData._decryptedDataUrl || elData.url || elData.localPath || elData.src || elData.dataUrl;
+        if (fallbackUrl && img) {
+          img.src = fallbackUrl;
+          img.classList.remove('hidden');
+          if (loader) loader.classList.add('hidden');
+        } else if (elData._isPendingSync) {
+          // Photo is currently uploading in background — keep pending upload indicator
+          if (loader) loader.innerText = 'Uploading... ⏳';
+        } else if (loader) {
           loader.innerText = '⚠️ Decrypt Error';
           loader.className = 'text-xs text-alert-pink';
         }
@@ -5620,9 +5689,9 @@ const ScrapCanvas = {
         return;
       }
 
-      if (data.encryptedData || data.fileId) {
+      if (data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl) {
         try {
-          await this.decryptAndDisplayImage(id, data.encryptedData || data.fileId, domEl || document.body);
+          await this.decryptAndDisplayImage(id, data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl, domEl || document.body);
         } catch (_) {}
       }
     });
@@ -5641,6 +5710,12 @@ const ScrapCanvas = {
       const y = el.y || 0;
       let w = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (el.width || 212);
       let h = (domEl && domEl.offsetHeight > 0) ? domEl.offsetHeight : (el.height || 260);
+
+      // Force rectangular ratio for video elements (175px x 128px)
+      if (el.type === 'video') {
+        w = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (el.width || 175);
+        h = Math.round(w * (128 / 175));
+      }
 
       // Force rectangular cassette tape aspect ratio for voice/music notes (200px x 115px)
       if (el.type === 'voice' || el.type === 'audio' || el.type === 'music') {
@@ -5746,7 +5821,12 @@ const ScrapCanvas = {
 
       if (data.type === 'text') {
         elW = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (data.width || 160);
-        elH = (domEl && domEl.offsetHeight > 0) ? domEl.offsetHeight : (data.height || 55);
+        elH = (domEl && domEl.offsetHeight > 0) ? domEl.offsetHeight : (data.height || 42);
+      }
+
+      if (data.type === 'video') {
+        elW = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (data.width || 175);
+        elH = Math.round(elW * (128 / 175)); // Force 175px x 128px rectangular video reel ratio
       }
 
       if (data.type === 'voice' || data.type === 'audio' || data.type === 'music') {
@@ -6150,52 +6230,72 @@ const ScrapCanvas = {
           ? domEl.innerText.trim()
           : (data._decryptedText || data.text || data.content || '💬 Note');
 
-        const bgColor = data.bgColor || (domEl ? getComputedStyle(domEl).backgroundColor : '') || 'rgba(18, 9, 33, 0.9)';
-        const textColor = data.textColor || data.color || (domEl ? getComputedStyle(domEl).color : '') || '#39ff14';
-        const borderColor = data.borderColor || data.color || 'rgba(0, 240, 255, 0.6)';
-
-        // Draw Rectangular Text Note Container Card
-        ctx.fillStyle = bgColor;
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth = 1.5;
-        ctx.shadowColor = 'rgba(0,0,0,0.4)';
-        ctx.shadowBlur = 8;
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 10); else ctx.rect(0, 0, elW, elH);
-        ctx.fill();
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        // Multi-line Word Wrap Text Rendering with exact font colors
-        ctx.fillStyle = textColor;
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        const words = textContent.split(' ');
-        const lines = [];
-        let currentLine = '';
-        const maxTextWidth = Math.max(40, elW - 16);
-
-        for (let i = 0; i < words.length; i++) {
-          const testLine = currentLine ? (currentLine + ' ' + words[i]) : words[i];
-          const metrics = ctx.measureText(testLine);
-          if (metrics.width > maxTextWidth && currentLine) {
-            lines.push(currentLine);
-            currentLine = words[i];
-          } else {
-            currentLine = testLine;
-          }
+        let isEmoji = false;
+        try {
+          const emojiRegex = new RegExp('[\\p{Emoji_Presentation}\\p{Extended_Pictographic}]', 'u');
+          isEmoji = emojiRegex.test(textContent);
+        } catch (e) {
+          isEmoji = textContent.length <= 4 && /[^\x00-\x7F]/.test(textContent);
         }
-        if (currentLine) lines.push(currentLine);
 
-        const lineHeight = 16;
-        const totalTextH = lines.length * lineHeight;
-        const startY = (elH / 2) - (totalTextH / 2) + (lineHeight / 2);
+        if (isEmoji) {
+          ctx.font = 'bold 36px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(textContent, elW / 2, elH / 2);
+        } else {
+          // Y2K Word-Art Sticker Container Card (Exact DOM match)
+          const grad = ctx.createLinearGradient(0, 0, elW, elH);
+          grad.addColorStop(0, '#2a085c');
+          grad.addColorStop(1, '#0d0221');
+          ctx.fillStyle = grad;
+          ctx.strokeStyle = '#a855f7';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = 'rgba(168, 85, 247, 0.5)';
+          ctx.shadowBlur = 12;
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 12); else ctx.rect(0, 0, elW, elH);
+          ctx.fill();
+          ctx.stroke();
+          ctx.shadowBlur = 0;
 
-        lines.forEach((line, idx) => {
-          ctx.fillText(line, elW / 2, startY + (idx * lineHeight));
-        });
+          // Glowing Neon Gradient Text
+          const textGrad = ctx.createLinearGradient(0, 0, elW, 0);
+          textGrad.addColorStop(0, '#ff00ab');
+          textGrad.addColorStop(1, '#00f0ff');
+          ctx.fillStyle = textGrad;
+          ctx.shadowColor = 'rgba(255, 0, 171, 0.6)';
+          ctx.shadowBlur = 6;
+          ctx.font = '900 16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+
+          const words = textContent.split(' ');
+          const lines = [];
+          let currentLine = '';
+          const maxTextWidth = Math.max(40, elW - 16);
+
+          for (let i = 0; i < words.length; i++) {
+            const testLine = currentLine ? (currentLine + ' ' + words[i]) : words[i];
+            const metrics = ctx.measureText(testLine);
+            if (metrics.width > maxTextWidth && currentLine) {
+              lines.push(currentLine);
+              currentLine = words[i];
+            } else {
+              currentLine = testLine;
+            }
+          }
+          if (currentLine) lines.push(currentLine);
+
+          const lineHeight = 18;
+          const totalTextH = lines.length * lineHeight;
+          const startY = (elH / 2) - (totalTextH / 2) + (lineHeight / 2);
+
+          lines.forEach((line, idx) => {
+            ctx.fillText(line, elW / 2, startY + (idx * lineHeight));
+          });
+          ctx.shadowBlur = 0;
+        }
       }
 
       ctx.restore();

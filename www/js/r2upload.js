@@ -19,31 +19,58 @@ const ScrapR2 = {
         mimeType: mimeType
       }
     });
-    return response.uploadUrl;
+    console.log('[r2-presign response]:', response);
+    const url = (response && (response.uploadUrl || response.url || response.presignedUrl || response.upload_url)) || (typeof response === 'string' ? response : null);
+    if (!url) {
+      throw new Error(`Invalid pre-signed R2 URL response: ${JSON.stringify(response)}`);
+    }
+    return url;
   },
 
-  async upload(fileName, arrayBuffer, mimeType) {
+  async upload(fileName, arrayBuffer, mimeType, onProgress) {
     try {
       const uploadUrl = await this.getPresignedUrl('PUT', fileName, mimeType);
+      console.log(`[ScrapR2] Uploading ${fileName} (${arrayBuffer.byteLength} bytes) to R2...`);
 
-      const res = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': mimeType
-        },
-        body: new Blob([arrayBuffer], { type: mimeType })
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        if (mimeType) {
+          try {
+            xhr.setRequestHeader('Content-Type', mimeType);
+          } catch (e) {}
+        }
+
+        if (xhr.upload && typeof onProgress === 'function') {
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && e.total > 0) {
+              const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+              onProgress(percent);
+            }
+          };
+        }
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            console.log(`[ScrapR2] Upload success for ${fileName}`);
+            if (typeof onProgress === 'function') onProgress(100);
+            resolve(true);
+          } else {
+            console.error(`[ScrapR2] Upload failed for ${fileName}: status ${xhr.status}`, xhr.responseText);
+            reject(new Error(`R2 Upload failed: status ${xhr.status} - ${xhr.responseText}`));
+          }
+        };
+
+        xhr.onerror = (e) => {
+          console.error(`[ScrapR2] Network error uploading ${fileName}:`, e);
+          reject(new Error('R2 Upload network error'));
+        };
+        xhr.ontimeout = () => reject(new Error('R2 Upload timeout'));
+
+        xhr.send(new Blob([arrayBuffer], { type: mimeType }));
       });
-
-      if (!res.ok) {
-        let errBody = '';
-        try {
-          errBody = await res.text();
-        } catch (e) {}
-        throw new Error(`R2 Upload failed: status ${res.status} - ${errBody}`);
-      }
-      return true;
     } catch (error) {
-      console.error("R2 Upload error:", error);
+      console.error("[ScrapR2] Upload error:", error);
       throw error;
     }
   },
