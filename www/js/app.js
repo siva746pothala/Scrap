@@ -9,7 +9,7 @@
  */
 
 // Set to true to disable console logs in production/release mode
-const DISABLE_LOGS = false;
+const DISABLE_LOGS = true;
 if (DISABLE_LOGS) {
   console.log = function () { };
   console.debug = function () { };
@@ -3483,7 +3483,6 @@ const ScrapApp = {
               if (SharePlugin && typeof SharePlugin.share === 'function') {
                 await SharePlugin.share({
                   title: `Mitrava Space - ${title}`,
-                  text: `Check out our canvas space "${title}" on Mitrava!`,
                   files: [writeRes.uri],
                   dialogTitle: 'Share Canvas Space'
                 });
@@ -3504,7 +3503,6 @@ const ScrapApp = {
               if (navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
                   title: `Mitrava Space - ${title}`,
-                  text: `Check out our canvas space "${title}" on Mitrava!`,
                   files: [file]
                 });
                 return;
@@ -3521,12 +3519,10 @@ const ScrapApp = {
             '💾 Download Image File'
           ]);
 
-          const shareText = encodeURIComponent(`Check out our canvas space "${title}" on Mitrava!`);
-
           if (optIdx === 0) {
-            window.open(`https://api.whatsapp.com/send?text=${shareText}`, '_blank');
+            window.open('https://api.whatsapp.com/send', '_blank');
           } else if (optIdx === 1) {
-            window.location.href = `mailto:?subject=${encodeURIComponent('Mitrava Canvas: ' + title)}&body=${shareText}`;
+            window.location.href = `mailto:?subject=${encodeURIComponent('Mitrava Canvas: ' + title)}`;
           } else if (optIdx === 2) {
             const a = document.createElement('a');
             a.href = pngDataUrl;
