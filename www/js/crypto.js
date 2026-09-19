@@ -169,6 +169,21 @@ const ScrapCrypto = {
       console.error('Signature verification error:', e);
       return false;
     }
+  },
+
+  // --- String & JSON Object E2EE Encryption/Decryption ---
+  async encryptText(textStr, key) {
+    if (!textStr || typeof textStr !== 'string') return textStr;
+    const buffer = this.stringToBuffer(textStr);
+    const combined = await this.encryptData(buffer, key);
+    return this.arrayBufferToBase64(combined);
+  },
+
+  async decryptText(base64Str, key) {
+    if (!base64Str || typeof base64Str !== 'string') return base64Str;
+    const combined = this.base64ToArrayBuffer(base64Str);
+    const decrypted = await this.decryptData(combined, key);
+    return this.bufferToString(decrypted);
   }
 };
 window.ScrapCrypto = ScrapCrypto;

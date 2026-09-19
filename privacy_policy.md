@@ -83,9 +83,9 @@ Please note that any content you share in a room may be visible to the members o
 We prioritize user privacy and implement industry-standard safeguards to protect your personal information:
 
 ### 5.1 End-to-End Encryption (E2EE)
-To protect your shared media, the App employs **End-to-End Encryption (E2EE)** specifically for user-uploaded room photos:
-- **Local Encryption**: Uploaded photos are encrypted directly on your device using advanced cryptographic algorithms before they are uploaded to our hosting servers.
-- **Zero-Knowledge Storage**: Room encryption keys are generated locally and stored securely inside your device's private vault. We do not have access to, nor do we store, your private encryption keys on our servers. Consequently, **we cannot decrypt, read, or monitor your encrypted photos.**
+To protect your shared media and content, the App employs **End-to-End Encryption (E2EE)** across all user-uploaded room content (including photos, videos, voice notes, text stickers, doodle drawings, custom stickers, profile/room avatars, and custom theme backgrounds):
+- **Local Encryption**: Photos, videos, voice recordings, text stickers, doodle drawings, custom stickers, avatars, and custom theme images are encrypted directly on your device using 256-bit AES-GCM cryptographic algorithms before they are uploaded to our hosting servers.
+- **Zero-Knowledge Storage**: Room encryption keys are generated locally and stored securely inside your device's private vault. We do not have access to, nor do we store, your private encryption keys on our servers. Consequently, **we cannot decrypt, read, or monitor your encrypted photos, videos, voice notes, text, or room content.**
 - **Authorized Sharing**: Only users whom you explicitly invite (via secure QR codes or invite links) can receive the keys required to decrypt and view the room content.
 
 ### 5.2 Device and Transmission Security

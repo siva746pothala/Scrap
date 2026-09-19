@@ -39,13 +39,61 @@ const ScrapApp = {
     const localTheme = localStorage.getItem('scrap_theme');
     if (localTheme) return localTheme;
 
-    // Auto-restore 'custom' theme if user has custom_bg on PocketBase server after app reinstall
+    // Auto-restore 'custom' theme if user has custom_bg or encrypted_custom_bg on PocketBase server after app reinstall
     const user = window.pb && pb.authStore.isValid && pb.authStore.model;
-    if (user && user.custom_bg) {
+    if (user && (user.custom_bg || user.encrypted_custom_bg)) {
       localStorage.setItem('scrap_theme', 'custom');
       return 'custom';
     }
     return 'cyberpunk';
+  },
+  async resolveCustomBgUrl(user) {
+    if (!user) return '';
+    let url = user.custom_bg ? `https://api.myscrapmemories.com/api/files/users/${user.id}/${user.custom_bg}` : '';
+    if (user.encrypted_custom_bg && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+      try {
+        const roomId = localStorage.getItem('scrap_current_room_id');
+        const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+        const keyToUse = roomKey || user.id;
+        const decBg = await ScrapCrypto.decryptText(user.encrypted_custom_bg, keyToUse);
+        if (decBg && decBg.startsWith('data:')) {
+          url = decBg;
+        }
+      } catch (_) { }
+    }
+    return url;
+  },
+  async resolveUserAvatarUrl(user) {
+    if (!user) return '';
+    let avatarUrl = user.avatar ? `https://api.myscrapmemories.com/api/files/users/${user.id}/${user.avatar}` : '';
+    if (user.encrypted_avatar && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+      try {
+        let roomId = localStorage.getItem('scrap_current_room_id');
+        let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+
+        // Fallback: If on dashboard after app restart & RAM clear, look up room key from user rooms
+        if (!roomKey && window.ScrapFirebase && typeof ScrapFirebase.getUserRooms === 'function') {
+          const rooms = await ScrapFirebase.getUserRooms(user.id);
+          for (const r of (rooms || [])) {
+            if (r && r.id) {
+              const k = await ScrapRecovery.getRoomKey(r.id);
+              if (k) {
+                roomKey = k;
+                break;
+              }
+            }
+          }
+        }
+
+        if (roomKey) {
+          const decAvatar = await ScrapCrypto.decryptText(user.encrypted_avatar, roomKey);
+          if (decAvatar && decAvatar.startsWith('data:')) {
+            avatarUrl = decAvatar;
+          }
+        }
+      } catch (_) { }
+    }
+    return avatarUrl;
   },
   applyTheme(theme) {
     const activeTheme = theme || this.getSavedTheme();
@@ -55,11 +103,15 @@ const ScrapApp = {
     let styleEl = document.getElementById('custom-theme-style');
     if (activeTheme === 'custom') {
       const user = window.pb && pb.authStore.isValid && pb.authStore.model;
-      const customBg = user && user.custom_bg
+      const plainBg = user && user.custom_bg
         ? `https://api.myscrapmemories.com/api/files/users/${user.id}/${user.custom_bg}`
         : '';
 
-      if (customBg) {
+      const updateBgCss = (bgUrl) => {
+        if (!bgUrl) {
+          if (styleEl) styleEl.remove();
+          return;
+        }
         if (!styleEl) {
           styleEl = document.createElement('style');
           styleEl.id = 'custom-theme-style';
@@ -67,7 +119,7 @@ const ScrapApp = {
         }
         styleEl.innerHTML = `
           body.theme-custom {
-            background-image: url('${customBg}') !important;
+            background-image: url('${bgUrl}') !important;
             background-size: cover !important;
             background-position: center !important;
             background-repeat: no-repeat !important;
@@ -76,8 +128,16 @@ const ScrapApp = {
             background-color: transparent !important;
           }
         `;
-      } else {
-        if (styleEl) styleEl.remove();
+      };
+
+      // Set fallback plain URL immediately for fast rendering
+      updateBgCss(plainBg);
+
+      // Asynchronously decrypt custom theme image if encrypted payload is available
+      if (user && user.encrypted_custom_bg) {
+        this.resolveCustomBgUrl(user).then(decryptedUrl => {
+          if (decryptedUrl) updateBgCss(decryptedUrl);
+        }).catch(() => { });
       }
     } else {
       if (styleEl) styleEl.remove();
@@ -1376,12 +1436,16 @@ const ScrapApp = {
       if (window.ScrapCanvas && window.ScrapCanvas.joinedMembers) {
         const member = window.ScrapCanvas.joinedMembers.find(m => m.id === uid);
         if (member && member.avatar) {
-          avatarUrl = `https://api.myscrapmemories.com/api/files/users/${uid}/${member.avatar}`;
+          avatarUrl = member.avatar.startsWith('data:') || member.avatar.startsWith('http')
+            ? member.avatar
+            : `https://api.myscrapmemories.com/api/files/users/${uid}/${member.avatar}`;
         }
       }
       if (!avatarUrl && uid && window.pb && pb.authStore.isValid && pb.authStore.model && pb.authStore.model.id === uid) {
         if (pb.authStore.model.avatar) {
-          avatarUrl = `https://api.myscrapmemories.com/api/files/users/${uid}/${pb.authStore.model.avatar}`;
+          avatarUrl = pb.authStore.model.avatar.startsWith('data:') || pb.authStore.model.avatar.startsWith('http')
+            ? pb.authStore.model.avatar
+            : `https://api.myscrapmemories.com/api/files/users/${uid}/${pb.authStore.model.avatar}`;
         }
       }
 
@@ -1542,7 +1606,7 @@ const ScrapApp = {
     await ScrapStorage.set('scrap_user_display_name', displayName);
 
     const userId = user.id;
-    const photoURL = user.avatar
+    let photoURL = user.avatar
       ? `https://api.myscrapmemories.com/api/files/users/${user.id}/${user.avatar}`
       : null;
 
@@ -1556,6 +1620,14 @@ const ScrapApp = {
       await ScrapRecovery.setupNewIdentity('000000');
     }
     sessionStorage.setItem('scrap_pin_session', '000000');
+
+    if (user.encrypted_avatar) {
+      try {
+        const decAvatar = await this.resolveUserAvatarUrl(user);
+        if (decAvatar) photoURL = decAvatar;
+      } catch (_) { }
+    }
+
     console.log('[ScrapApp] _finishLogin → loginCompleted. displayName:', displayName, '| pbName:', user.name);
     await this.loginCompleted(displayName, userId, photoURL);
   },
@@ -1788,13 +1860,11 @@ const ScrapApp = {
     // Tap user avatar -> Open high-res profile preview and allow edits
     const dashboardAvatarContainer = document.getElementById('dashboard-avatar-container');
     if (dashboardAvatarContainer) {
-      dashboardAvatarContainer.addEventListener('click', () => {
+      dashboardAvatarContainer.addEventListener('click', async () => {
         if (window.pb && pb.authStore.isValid && pb.authStore.model) {
           const user = pb.authStore.model;
           const uName = user.name || user.username || 'User';
-          const avatarUrl = user.avatar
-            ? `https://api.myscrapmemories.com/api/files/users/${user.id}/${user.avatar}`
-            : '';
+          const avatarUrl = await this.resolveUserAvatarUrl(user);
           this.showUserAvatarPreview(uName, avatarUrl);
         }
       });
@@ -2578,7 +2648,7 @@ const ScrapApp = {
               <div id="custom-theme-upload-container" style="display: ${currentTheme === 'custom' ? 'flex' : 'none'}; flex-direction: column; gap: 6px; padding: 0 8px;">
                 <input type="file" id="input-custom-theme-file" accept="image/*" style="display: none;" />
                 <button id="btn-upload-custom-bg" style="background: rgba(255,255,255,0.06); border: 1px dashed rgba(255,255,255,0.2); color: #fff; font-family: monospace; font-size: 11px; padding: 8px; border-radius: 8px; cursor: pointer; text-align: center; width: 100%;">
-                  ${(window.pb && pb.authStore.isValid && pb.authStore.model && pb.authStore.model.custom_bg) ? 'CHANGE IMAGE 📷' : 'UPLOAD IMAGE 📁'}
+                  ${(window.pb && pb.authStore.isValid && pb.authStore.model && (pb.authStore.model.custom_bg || pb.authStore.model.encrypted_custom_bg)) ? 'CHANGE IMAGE 📷' : 'UPLOAD IMAGE 📁'}
                 </button>
               </div>
             </div>
@@ -2674,7 +2744,7 @@ const ScrapApp = {
               uploadContainer.style.display = 'flex';
             }
             const user = window.pb && pb.authStore.isValid && pb.authStore.model;
-            const hasImg = user && user.custom_bg;
+            const hasImg = user && (user.custom_bg || user.encrypted_custom_bg);
             if (!hasImg) {
               if (fileInput) fileInput.click();
               return;
@@ -3518,9 +3588,25 @@ const ScrapApp = {
 
           const id = 'text_' + Date.now();
           window.pendingScrollToElementId = null; // Prevent board auto-scrolling on text addition
+
+          let textVal = val.trim();
+          let encText = null;
+          let isEncrypted = false;
+          try {
+            const roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+            if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+              encText = await ScrapCrypto.encryptText(textVal, roomKey);
+              isEncrypted = true;
+            }
+          } catch (cryptoErr) {
+            console.warn('[Text] Encryption failed, saving plain text fallback:', cryptoErr);
+          }
+
           const textElement = {
             type: 'text',
-            text: val.trim(),
+            text: textVal,
+            encryptedText: encText,
+            encrypted: isEncrypted,
             x: x,
             y: y,
             rotation: Math.floor(Math.random() * 20) - 10,
@@ -3877,10 +3963,26 @@ const ScrapApp = {
           try {
             const arrayBuffer = await audioBlob.arrayBuffer();
 
-            // Upload raw audio directly to Google Drive (saves localStorage space!)
+            // Encrypt audio in RAM using room key
+            let encBuf = arrayBuffer;
+            let isEncrypted = false;
+            try {
+              const roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+              if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.encryptData === 'function') {
+                console.log('[Voice] Encrypting audio file with AES-GCM 256...');
+                encBuf = await ScrapCrypto.encryptData(arrayBuffer, roomKey);
+                isEncrypted = true;
+              } else {
+                console.warn('[Voice] Room key missing, uploading plain audio fallback.');
+              }
+            } catch (cryptoErr) {
+              console.error('[Voice] Encryption error, uploading plain audio fallback:', cryptoErr);
+              encBuf = arrayBuffer;
+            }
+
             const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
-            let fileExt = 'mp4';
-            if (audioBlob.type) {
+            let fileExt = isEncrypted ? 'enc' : 'm4a';
+            if (!isEncrypted && audioBlob.type) {
               if (audioBlob.type.includes('webm')) fileExt = 'webm';
               else if (audioBlob.type.includes('ogg')) fileExt = 'ogg';
               else if (audioBlob.type.includes('wav')) fileExt = 'wav';
@@ -3890,9 +3992,9 @@ const ScrapApp = {
               else if (audioBlob.type.includes('m4a')) fileExt = 'm4a';
             }
             const mimeType = audioBlob.type || 'audio/mp4';
-            const uploadResult = await ScrapDrive.uploadFile(`voice_${Date.now()}.${fileExt}`, arrayBuffer, roomFolderId, mimeType);
+            const uploadResult = await ScrapDrive.uploadFile(`voice_${Date.now()}.${fileExt}`, encBuf, roomFolderId, mimeType);
             if (!uploadResult || !uploadResult.id) {
-              throw new Error('Failed to upload voice note to Google Drive.');
+              throw new Error('Failed to upload voice note to Google Drive / R2.');
             }
             const audioFileId = uploadResult.id;
 
@@ -3922,10 +4024,10 @@ const ScrapApp = {
 
             const voiceElement = {
               type: elementType,
-              audioFileId: audioFileId, // Reference to Google Drive file
+              audioFileId: audioFileId, // Reference to Google Drive / R2 file
               mimeType: audioBlob.type || 'audio/mp4',
               duration: durationMs,
-              encrypted: false,
+              encrypted: isEncrypted,
               createdAt: Date.now(),
               x, y,
               rotation: Math.floor(Math.random() * 16) - 8,
@@ -4665,10 +4767,23 @@ const ScrapApp = {
           const y = Math.round((scrollTop - boardMargin + workspaceHeight / 2) / zoomVal - 40);
 
           const id = 'sticker_' + Date.now();
-          window.pendingScrollToElementId = null; // Prevent board auto-scrolling on sticker addition
+          let encSrc = null;
+          let isEncrypted = false;
+          try {
+            const roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+            if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+              encSrc = await ScrapCrypto.encryptText(src, roomKey);
+              isEncrypted = true;
+            }
+          } catch (cryptoErr) {
+            console.warn('[Sticker] Encryption failed, saving plain src fallback:', cryptoErr);
+          }
+
           const stickerElement = {
             type: 'sticker',
             src: src,
+            encryptedSrc: encSrc,
+            encrypted: isEncrypted,
             width: 200,
             height: 200,
             x: x,
@@ -4905,10 +5020,24 @@ const ScrapApp = {
       const x = Math.round((scrollLeft - boardMargin + workspaceWidth / 2) / zoomVal - w / 2);
       const y = Math.round((scrollTop - boardMargin + workspaceHeight / 2) / zoomVal - h / 2);
 
+      let encSrc = null;
+      let isEncrypted = false;
+      try {
+        const roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+        if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+          encSrc = await ScrapCrypto.encryptText(stickerDataUrl, roomKey);
+          isEncrypted = true;
+        }
+      } catch (cryptoErr) {
+        console.warn('[CustomSticker] Encryption failed, saving plain src fallback:', cryptoErr);
+      }
+
       const id = 'sticker_' + Date.now();
       const stickerElement = {
         type: 'sticker',
         src: stickerDataUrl,
+        encryptedSrc: encSrc,
+        encrypted: isEncrypted,
         width: w,
         height: h,
         x: x,
@@ -5036,10 +5165,25 @@ const ScrapApp = {
       const checkSparkles = document.getElementById('check-doodle-sparkles');
       const isSparkly = checkSparkles ? checkSparkles.checked : false;
 
+      let encStrokes = null;
+      let isEncrypted = false;
+      try {
+        const roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+        if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+          const jsonStr = JSON.stringify(localStrokes);
+          encStrokes = await ScrapCrypto.encryptText(jsonStr, roomKey);
+          isEncrypted = true;
+        }
+      } catch (cryptoErr) {
+        console.warn('[Doodle] Encryption failed, saving plain strokes fallback:', cryptoErr);
+      }
+
       const id = 'doodle_' + Date.now();
       const doodleData = {
         type: 'doodle',
         strokes: localStrokes,
+        encryptedStrokes: encStrokes,
+        encrypted: isEncrypted,
         width: w,
         height: h,
         x: boardX,
@@ -5895,13 +6039,27 @@ const ScrapApp = {
       // 1. Read array buffer
       const arrayBuffer = await file.arrayBuffer();
 
-      // 2. Encryption bypassed per user request for testing
-      const encBuf = arrayBuffer;
+      // 2. Encrypt video in RAM using room key
+      let encBuf = arrayBuffer;
+      let isEncrypted = false;
+      try {
+        const roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+        if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.encryptData === 'function') {
+          console.log('[Video] Encrypting video file with AES-GCM 256...');
+          encBuf = await ScrapCrypto.encryptData(arrayBuffer, roomKey);
+          isEncrypted = true;
+        } else {
+          console.warn('[Video] Room key missing, uploading fallback plain video.');
+        }
+      } catch (cryptoErr) {
+        console.error('[Video] Encryption error, falling back to plain upload:', cryptoErr);
+        encBuf = arrayBuffer;
+      }
 
-      // 3. Upload to Google Drive room folder
+      // 3. Upload to Google Drive room folder / Cloudflare R2
       const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
-      let fileExt = 'mp4';
-      if (file.type && file.type.includes('webm')) {
+      let fileExt = isEncrypted ? 'enc' : 'mp4';
+      if (!isEncrypted && file.type && file.type.includes('webm')) {
         fileExt = 'webm';
       }
       const fileName = `video_${Date.now()}.${fileExt}`;
@@ -5909,10 +6067,10 @@ const ScrapApp = {
       const uploadResult = await ScrapDrive.uploadFile(fileName, encBuf, roomFolderId, mimeType);
 
       if (!uploadResult || !uploadResult.id) {
-        throw new Error('Failed to upload video to Google Drive.');
+        throw new Error('Failed to upload video file.');
       }
 
-      // 4. Save metadata to Firebase
+      // 4. Save metadata to Firebase / PocketBase
       const elementId = 'video_' + Date.now();
 
       // Calculate centering position on canvas
@@ -5938,6 +6096,7 @@ const ScrapApp = {
       const videoElement = {
         type: 'video',
         videoFileId: uploadResult.id,
+        encrypted: isEncrypted,
         mimeType: mimeType,
         x: x,
         y: y,
@@ -6341,7 +6500,10 @@ const ScrapApp = {
 
     try {
       const container = document.getElementById('rooms-container');
-      if (container) {
+      if (!container) return;
+
+      const hasExistingRooms = container.children && container.children.length > 0 && !container.querySelector('.animate-pulse');
+      if (!hasExistingRooms) {
         container.innerHTML = `
           <div class="animate-pulse rounded-2xl p-4.5 flex justify-between items-center border border-white/5 bg-white/[0.02]" style="height: 80px;">
             <div class="flex items-center gap-3.5 w-full">
@@ -6371,9 +6533,6 @@ const ScrapApp = {
         }
       });
       rooms = uniqueRooms;
-
-      // Clear container right before appending (prevents parallel call appending duplicates)
-      container.innerHTML = '';
 
       const theme = this.getSavedTheme();
       const cardStyles = [
@@ -6430,66 +6589,150 @@ const ScrapApp = {
 
       const colors = themeColors[theme] || themeColors.cyberpunk;
 
+      // Async decrypt room avatars if encrypted avatar payload exists
+      for (const r of rooms) {
+        let avatarUrl = r.avatar ? `https://api.myscrapmemories.com/api/files/boards/${r.id}/${r.avatar}` : '';
+        if (r.encrypted_avatar && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+          try {
+            const roomKey = await ScrapRecovery.getRoomKey(r.id);
+            if (roomKey) {
+              const decAvatar = await ScrapCrypto.decryptText(r.encrypted_avatar, roomKey);
+              if (decAvatar && decAvatar.startsWith('data:')) {
+                avatarUrl = decAvatar;
+              }
+            }
+          } catch (_) { }
+        }
+        r.resolvedAvatarUrl = avatarUrl;
+      }
+
+      // If container was showing skeleton loader, clear it before rendering real cards
+      if (container.querySelector('.animate-pulse')) {
+        container.innerHTML = '';
+      }
+
+      const existingCards = Array.from(container.querySelectorAll('[data-card-room-id]'));
+      const existingMap = new Map();
+      existingCards.forEach(card => existingMap.set(card.getAttribute('data-card-room-id'), card));
+
+      const activeRoomIds = new Set();
+
       rooms.forEach((r, idx) => {
+        activeRoomIds.add(r.id);
         const styleClass = cardStyles[idx % cardStyles.length];
         let colorHex = colors.green;
         if (styleClass === 'dashboard-card-blue') colorHex = colors.blue;
         else if (styleClass === 'dashboard-card-purple') colorHex = colors.purple;
         else if (styleClass === 'dashboard-card-pink') colorHex = colors.pink;
 
-        const el = document.createElement('div');
-        el.className = `${styleClass} rounded-2xl p-4.5 flex justify-between items-center hover:scale-[1.01] active:scale-[0.99] cursor-pointer shadow-xl transition-all relative overflow-hidden w-full group animate-card-landing`;
-        el.style.animationDelay = `${idx * 60}ms`;
-
         const safeTitle = (r && typeof r.title === 'string' && r.title.trim()) ? r.title.trim() : 'SQ';
         const isOwner = r.createdBy === ScrapFirebase.userId;
-        const avatarUrl = r.avatar ? `https://api.myscrapmemories.com/api/files/boards/${r.id}/${r.avatar}` : '';
+        const avatarUrl = r.resolvedAvatarUrl || '';
 
-        el.innerHTML = `
-          <div class="flex items-center gap-3.5">
-            <div class="relative w-12 h-12 flex-shrink-0 btn-preview-avatar animate-fade-in" data-title="${safeTitle}" data-avatar-url="${avatarUrl}" data-color="${colorHex}" data-room-id="${r.id}" data-owner="${isOwner}">
-              <div class="w-12 h-12 rounded-full bg-black/40 flex items-center justify-center border font-mono font-bold text-sm uppercase overflow-hidden transition-transform duration-200 active:scale-95" style="color: ${colorHex}; border-color: ${colorHex}45;">
-                ${avatarUrl
-            ? `<img src="${avatarUrl}" class="w-full h-full object-cover">`
-            : safeTitle.substring(0, 2).toUpperCase()
+        const existingEl = existingMap.get(r.id);
+
+        if (existingEl) {
+          // Silent In-Place Update: Do NOT recreate DOM node or re-trigger animations!
+          const avatarBtn = existingEl.querySelector('.btn-preview-avatar');
+          if (avatarBtn) {
+            avatarBtn.setAttribute('data-title', safeTitle);
+            avatarBtn.setAttribute('data-avatar-url', avatarUrl);
+            avatarBtn.setAttribute('data-color', colorHex);
+            avatarBtn.setAttribute('data-owner', isOwner);
+
+            const innerCircle = avatarBtn.querySelector('.rounded-full');
+            if (innerCircle) {
+              innerCircle.style.color = colorHex;
+              innerCircle.style.borderColor = `${colorHex}45`;
+              let img = innerCircle.querySelector('img');
+              if (avatarUrl) {
+                if (img) {
+                  if (img.src !== avatarUrl) img.src = avatarUrl;
+                } else {
+                  innerCircle.innerHTML = `<img src="${avatarUrl}" class="w-full h-full object-cover">`;
+                }
+              } else {
+                if (img) {
+                  innerCircle.innerHTML = safeTitle.substring(0, 2).toUpperCase();
+                } else {
+                  innerCircle.textContent = safeTitle.substring(0, 2).toUpperCase();
+                }
+              }
+            }
           }
+
+          const titleEl = existingEl.querySelector('h3');
+          if (titleEl && titleEl.textContent !== safeTitle) {
+            titleEl.textContent = safeTitle;
+          }
+
+          const vaultTypeEl = existingEl.querySelector('p');
+          const expectedVaultType = r.isGroup ? 'Group Vault' : 'Solo Vault';
+          if (vaultTypeEl && vaultTypeEl.textContent !== expectedVaultType) {
+            vaultTypeEl.textContent = expectedVaultType;
+          }
+        } else {
+          // New Room Card: Create element and append
+          const el = document.createElement('div');
+          el.setAttribute('data-card-room-id', r.id);
+          el.className = `${styleClass} rounded-2xl p-4.5 flex justify-between items-center hover:scale-[1.01] active:scale-[0.99] cursor-pointer shadow-xl transition-all relative overflow-hidden w-full group animate-card-landing`;
+          el.style.animationDelay = `${idx * 60}ms`;
+
+          el.innerHTML = `
+            <div class="flex items-center gap-3.5">
+              <div class="relative w-12 h-12 flex-shrink-0 btn-preview-avatar animate-fade-in" data-title="${safeTitle}" data-avatar-url="${avatarUrl}" data-color="${colorHex}" data-room-id="${r.id}" data-owner="${isOwner}">
+                <div class="w-12 h-12 rounded-full bg-black/40 flex items-center justify-center border font-mono font-bold text-sm uppercase overflow-hidden transition-transform duration-200 active:scale-95" style="color: ${colorHex}; border-color: ${colorHex}45;">
+                  ${avatarUrl
+                    ? `<img src="${avatarUrl}" class="w-full h-full object-cover">`
+                    : safeTitle.substring(0, 2).toUpperCase()
+                  }
+                </div>
+              </div>
+              <div>
+                <h3 class="font-extrabold font-space text-sm tracking-wide theme-text-main uppercase">${safeTitle}</h3>
+                <div class="flex items-center gap-1.5 mt-0.5">
+                  <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${colorHex};"></span>
+                  <p class="text-[9px] font-mono theme-text-muted uppercase tracking-widest">${r.isGroup ? 'Group Vault' : 'Solo Vault'}</p>
+                </div>
               </div>
             </div>
-            <div>
-              <h3 class="font-extrabold font-space text-sm tracking-wide theme-text-main uppercase">${safeTitle}</h3>
-              <div class="flex items-center gap-1.5 mt-0.5">
-                <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${colorHex};"></span>
-                <p class="text-[9px] font-mono theme-text-muted uppercase tracking-widest">${r.isGroup ? 'Group Vault' : 'Solo Vault'}</p>
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-full flex items-center justify-center border transition-all duration-300 bg-black/25 group-hover:bg-white/10" style="color: ${colorHex}; border-color: ${colorHex}35;">
+                <svg class="w-4 h-4 transform transition-transform duration-300 group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
               </div>
             </div>
-          </div>
-          <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center border transition-all duration-300 bg-black/25 group-hover:bg-white/10" style="color: ${colorHex}; border-color: ${colorHex}35;">
-              <svg class="w-4 h-4 transform transition-transform duration-300 group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </div>
-          </div>
-        `;
+          `;
 
-        el.addEventListener('click', () => {
-          this.openRoom(r.id, r.title);
-        });
+          el.addEventListener('click', () => {
+            this.openRoom(r.id, r.title);
+          });
 
-        container.appendChild(el);
+          // Add preview avatar click listener
+          const avatarBtn = el.querySelector('.btn-preview-avatar');
+          if (avatarBtn) {
+            avatarBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const title = avatarBtn.getAttribute('data-title');
+              const url = avatarBtn.getAttribute('data-avatar-url');
+              const color = avatarBtn.getAttribute('data-color');
+              const roomId = avatarBtn.getAttribute('data-room-id');
+              const owner = avatarBtn.getAttribute('data-owner') === 'true';
+              this.showAvatarPreview(title, url, color, roomId, owner);
+            });
+          }
+
+          container.appendChild(el);
+        }
       });
 
-      // Add preview avatar click listeners (WhatsApp style popup)
-      container.querySelectorAll('.btn-preview-avatar').forEach(avatarContainer => {
-        avatarContainer.addEventListener('click', (e) => {
-          e.stopPropagation(); // Prevent opening the room
-          const title = avatarContainer.getAttribute('data-title');
-          const url = avatarContainer.getAttribute('data-avatar-url');
-          const color = avatarContainer.getAttribute('data-color');
-          const roomId = avatarContainer.getAttribute('data-room-id');
-          const isOwner = avatarContainer.getAttribute('data-owner') === 'true';
-          this.showAvatarPreview(title, url, color, roomId, isOwner);
-        });
+      // Remove cards that no longer exist
+      existingCards.forEach(card => {
+        const roomId = card.getAttribute('data-card-room-id');
+        if (roomId && !activeRoomIds.has(roomId)) {
+          card.remove();
+        }
       });
 
       // ── Inject ads between room cards (non-intrusive) ──────────
@@ -6672,16 +6915,15 @@ const ScrapApp = {
 
             uploadBtn.innerText = '⏳ Uploading...';
             if (window.ScrapFirebase && typeof ScrapFirebase.uploadUserAvatar === 'function') {
-              const newAvatarName = await ScrapFirebase.uploadUserAvatar(processedFile);
+              const newAvatarDataUrl = await ScrapFirebase.uploadUserAvatar(processedFile);
               closePreview();
 
               // Dynamically update the dashboard icon on the screen
-              const newUrl = `https://api.myscrapmemories.com/api/files/users/${pb.authStore.model.id}/${newAvatarName}`;
               const avatarImg = document.getElementById('dashboard-avatar');
               const avatarPlaceholder = document.getElementById('dashboard-avatar-placeholder');
 
-              if (avatarImg) {
-                avatarImg.src = newUrl;
+              if (avatarImg && newAvatarDataUrl) {
+                avatarImg.src = newAvatarDataUrl;
                 avatarImg.classList.remove('hidden');
               }
               if (avatarPlaceholder) {

@@ -438,13 +438,15 @@ const ScrapFirebase = {
                   allMembers.push({
                     id: owner.id,
                     name: owner.name || owner.username || 'Creator',
-                    avatar: owner.avatar || ''
+                    avatar: owner.avatar || '',
+                    encrypted_avatar: owner.encrypted_avatar || ''
                   });
                 } else if (record.user) {
                   allMembers.push({
                     id: record.user,
                     name: 'Creator',
-                    avatar: ''
+                    avatar: '',
+                    encrypted_avatar: ''
                   });
                 }
 
@@ -464,7 +466,8 @@ const ScrapFirebase = {
                   allMembers.push({
                     id: mid,
                     name: expandedUser ? (expandedUser.name || expandedUser.username || 'Squadmate') : 'Squadmate',
-                    avatar: expandedUser ? (expandedUser.avatar || '') : ''
+                    avatar: expandedUser ? (expandedUser.avatar || '') : '',
+                    encrypted_avatar: expandedUser ? (expandedUser.encrypted_avatar || '') : ''
                   });
                 });
 
@@ -673,7 +676,8 @@ const ScrapFirebase = {
         title: r.title || 'Squad Space',
         createdBy: r.user || pb.authStore.model.id,
         isGroup: r.members && r.members.length > 0,
-        avatar: r.avatar || ''
+        avatar: r.avatar || '',
+        encrypted_avatar: r.encrypted_avatar || ''
       }));
     } catch (e) {
       console.error('[PocketBase getUserRooms] Error:', e);
@@ -992,9 +996,27 @@ const ScrapFirebase = {
     }
     const compressedFile = await this.compressImage(file, 50, 512);
     const formData = new FormData();
-    formData.append('avatar', compressedFile);
+    formData.append('avatar', '');
+    let dataUrl = '';
+
+    try {
+      const roomKey = await ScrapRecovery.getRoomKey(roomId);
+      dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(compressedFile);
+      });
+      if (roomKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, roomKey);
+        formData.append('encrypted_avatar', encData);
+      }
+    } catch (cryptoErr) {
+      console.warn('[Avatar] Encryption error for room avatar:', cryptoErr);
+    }
+
     const updatedRecord = await pb.collection('boards').update(roomId, formData);
-    return updatedRecord.avatar;
+    return dataUrl || updatedRecord.encrypted_avatar;
   },
 
   async uploadUserAvatar(file) {
@@ -1003,10 +1025,33 @@ const ScrapFirebase = {
     }
     const compressedFile = await this.compressImage(file, 50, 512);
     const formData = new FormData();
-    formData.append('avatar', compressedFile);
+    formData.append('avatar', '');
+    let dataUrl = '';
+
+    try {
+      const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
+      const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+      const keyToUse = roomKey || pb.authStore.model.id;
+      dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(compressedFile);
+      });
+      if (keyToUse && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, keyToUse);
+        formData.append('encrypted_avatar', encData);
+      }
+    } catch (cryptoErr) {
+      console.warn('[Avatar] Encryption error for user avatar:', cryptoErr);
+    }
+
     const updatedRecord = await pb.collection('users').update(pb.authStore.model.id, formData);
-    pb.authStore.model.avatar = updatedRecord.avatar;
-    return updatedRecord.avatar;
+    pb.authStore.model.avatar = '';
+    if (updatedRecord.encrypted_avatar) {
+      pb.authStore.model.encrypted_avatar = updatedRecord.encrypted_avatar;
+    }
+    return dataUrl || updatedRecord.encrypted_avatar;
   },
 
   async uploadUserCustomBg(file) {
@@ -1015,10 +1060,33 @@ const ScrapFirebase = {
     }
     const compressedFile = await this.compressImage(file, 200, 1920);
     const formData = new FormData();
-    formData.append('custom_bg', compressedFile);
+    formData.append('custom_bg', '');
+    let dataUrl = '';
+
+    try {
+      const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
+      const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+      const keyToUse = roomKey || pb.authStore.model.id;
+      dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(compressedFile);
+      });
+      if (keyToUse && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, keyToUse);
+        formData.append('encrypted_custom_bg', encData);
+      }
+    } catch (cryptoErr) {
+      console.warn('[Custom BG] Encryption error for user custom background:', cryptoErr);
+    }
+
     const updatedRecord = await pb.collection('users').update(pb.authStore.model.id, formData);
-    pb.authStore.model.custom_bg = updatedRecord.custom_bg;
-    return updatedRecord.custom_bg;
+    pb.authStore.model.custom_bg = '';
+    if (updatedRecord.encrypted_custom_bg) {
+      pb.authStore.model.encrypted_custom_bg = updatedRecord.encrypted_custom_bg;
+    }
+    return dataUrl || updatedRecord.encrypted_custom_bg;
   },
 
   broadcastAlert(roomId, type, message) {

@@ -1662,24 +1662,50 @@ const ScrapCanvas = {
     } else if (data.type === 'recovery_response') {
       contentContainer.innerHTML = '';
     } else if (data.type === 'text') {
+      let displayText = data.text || '';
+      if (data.encryptedText && data.encrypted !== false && !data._decryptedText) {
+        try {
+          const roomId = ScrapFirebase.roomId || localStorage.getItem('scrap_current_room_id');
+          const roomKey = ScrapRecovery.getRoomKey(roomId);
+          if (roomKey instanceof Promise) {
+            roomKey.then(async (k) => {
+              if (k && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+                data._decryptedText = await ScrapCrypto.decryptText(data.encryptedText, k);
+                this.renderOrUpdateElementDom(id, data);
+              }
+            }).catch(console.error);
+          } else if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+            ScrapCrypto.decryptText(data.encryptedText, roomKey).then(decStr => {
+              data._decryptedText = decStr;
+              this.renderOrUpdateElementDom(id, data);
+            }).catch(console.error);
+          }
+        } catch (decErr) {
+          console.warn('[Text] Decryption failed, falling back to plain text:', decErr);
+        }
+      }
+      if (data._decryptedText) {
+        displayText = data._decryptedText;
+      }
+
       let isEmoji = false;
       try {
         const emojiRegex = new RegExp('[\\p{Emoji_Presentation}\\p{Extended_Pictographic}]', 'u');
-        isEmoji = emojiRegex.test(data.text);
+        isEmoji = emojiRegex.test(displayText);
       } catch (e) {
-        isEmoji = data.text.length <= 4 && /[^\x00-\x7F]/.test(data.text);
+        isEmoji = displayText.length <= 4 && /[^\x00-\x7F]/.test(displayText);
       }
       if (isEmoji) {
         contentContainer.innerHTML = `
           <div class="select-none leading-none text-center pointer-events-none" style="font-size: 44px;">
-            ${data.text}
+            ${displayText}
           </div>
         `;
       } else {
         // Y2K Gradient Word-Art sticker with glowing background borders
         contentContainer.innerHTML = `
           <div class="px-4 py-2.5 bg-black/90 border-2 border-purple-500 text-white rounded-xl shadow-[0_0_15px_rgba(168,85,247,0.5)] whitespace-nowrap pointer-events-none font-sans font-black tracking-wider text-xl" style="background-image: linear-gradient(135deg, #2a085c 0%, #0d0221 100%);">
-            <span style="background: linear-gradient(45deg, #ff00ab 0%, #00f0ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 4px rgba(255,0,171,0.4));">${data.text}</span>
+            <span style="background: linear-gradient(45deg, #ff00ab 0%, #00f0ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 4px rgba(255,0,171,0.4));">${displayText}</span>
           </div>
         `;
       }
@@ -1690,11 +1716,37 @@ const ScrapCanvas = {
         img = contentContainer.querySelector('img');
       }
 
+      let targetSrc = data.src || '';
+      if (data.encryptedSrc && data.encrypted !== false && !data._decryptedSrc) {
+        try {
+          const roomId = ScrapFirebase.roomId || localStorage.getItem('scrap_current_room_id');
+          const roomKey = ScrapRecovery.getRoomKey(roomId);
+          if (roomKey instanceof Promise) {
+            roomKey.then(async (k) => {
+              if (k && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+                data._decryptedSrc = await ScrapCrypto.decryptText(data.encryptedSrc, k);
+                this.renderOrUpdateElementDom(id, data);
+              }
+            }).catch(console.error);
+          } else if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+            ScrapCrypto.decryptText(data.encryptedSrc, roomKey).then(decSrc => {
+              data._decryptedSrc = decSrc;
+              this.renderOrUpdateElementDom(id, data);
+            }).catch(console.error);
+          }
+        } catch (decErr) {
+          console.warn('[Sticker] Decryption failed, falling back to plain src:', decErr);
+        }
+      }
+      if (data._decryptedSrc) {
+        targetSrc = data._decryptedSrc;
+      }
+
       // Only process transparency if the source has changed or is not yet set
       const currentSrc = img.getAttribute('data-original-src');
-      if (!img.src || currentSrc !== data.src) {
-        img.setAttribute('data-original-src', data.src);
-        this.getTransparentSticker(data.src, (url) => {
+      if (!img.src || currentSrc !== targetSrc) {
+        img.setAttribute('data-original-src', targetSrc);
+        this.getTransparentSticker(targetSrc, (url) => {
           img.src = url;
           img.classList.remove('opacity-0');
         });
@@ -1702,12 +1754,35 @@ const ScrapCanvas = {
         img.classList.remove('opacity-0');
       }
     } else if (data.type === 'doodle') {
-
       let canvas = contentContainer.querySelector('canvas');
       if (!canvas) {
         contentContainer.innerHTML = `<canvas class="w-full h-full pointer-events-none"></canvas>`;
         canvas = contentContainer.querySelector('canvas');
       }
+
+      if (data.encryptedStrokes && data.encrypted !== false && !data._decryptedStrokes) {
+        try {
+          const roomId = ScrapFirebase.roomId || localStorage.getItem('scrap_current_room_id');
+          const roomKey = ScrapRecovery.getRoomKey(roomId);
+          if (roomKey instanceof Promise) {
+            roomKey.then(async (k) => {
+              if (k && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+                const jsonStr = await ScrapCrypto.decryptText(data.encryptedStrokes, k);
+                data._decryptedStrokes = JSON.parse(jsonStr);
+                this.drawDoodleOnElementCanvas(canvas, data);
+              }
+            }).catch(console.error);
+          } else if (roomKey && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
+            ScrapCrypto.decryptText(data.encryptedStrokes, roomKey).then(jsonStr => {
+              data._decryptedStrokes = JSON.parse(jsonStr);
+              this.drawDoodleOnElementCanvas(canvas, data);
+            }).catch(console.error);
+          }
+        } catch (decErr) {
+          console.warn('[Doodle] Decryption failed, falling back to plain strokes:', decErr);
+        }
+      }
+
       this.drawDoodleOnElementCanvas(canvas, data);
       if (data.wobble) {
         canvas.classList.add('wobble-active');
@@ -1908,9 +1983,14 @@ const ScrapCanvas = {
               if (data.encrypted === false) {
                 decBuf = encBuf;
               } else {
-                const roomKey = await ScrapRecovery.getRoomKey(roomId);
-                if (!roomKey) throw new Error('Room key not found. Re-open the room to restore access.');
-                decBuf = await ScrapCrypto.decryptData(encBuf, roomKey);
+                try {
+                  const roomKey = await ScrapRecovery.getRoomKey(roomId);
+                  if (!roomKey) throw new Error('Room key not found. Re-open the room to restore access.');
+                  decBuf = await ScrapCrypto.decryptData(encBuf, roomKey);
+                } catch (audioDecErr) {
+                  console.warn('[Audio] Decryption failed, falling back to plain file:', audioDecErr);
+                  decBuf = encBuf;
+                }
               }
 
               // Use audio/mp4 which covers both .m4a and .aac MPEG_4 containers recorded on Android
@@ -2163,12 +2243,41 @@ const ScrapCanvas = {
             const raw = await ScrapDrive.downloadFile(data.videoFileId);
             const encBuf = raw instanceof ArrayBuffer ? raw : raw.buffer ? raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) : raw;
 
-            // Decryption bypassed per user request for testing
-            const decBuf = encBuf;
+            let decBuf;
+            if (data.encrypted === false) {
+              decBuf = encBuf;
+            } else {
+              try {
+                const roomKey = await ScrapRecovery.getRoomKey(roomId);
+                if (!roomKey) throw new Error('Room key not found.');
+                decBuf = await ScrapCrypto.decryptData(encBuf, roomKey);
+              } catch (decErr) {
+                console.warn('[Video] Decryption failed, falling back to plain file:', decErr);
+                decBuf = encBuf;
+              }
+            }
 
             const blob = new Blob([decBuf], { type: data.mimeType || 'video/mp4' });
+            if (video.src && video.src.startsWith('blob:')) {
+              try { URL.revokeObjectURL(video.src); } catch (e) { }
+            }
             const localUrl = URL.createObjectURL(blob);
             video.src = localUrl;
+
+            const cleanupVideo = () => {
+              if (video.src && video.src.startsWith('blob:')) {
+                try { URL.revokeObjectURL(video.src); } catch (_) { }
+                video.removeAttribute('src');
+                video.load();
+              }
+              video.classList.add('hidden');
+              if (overlay) overlay.classList.remove('hidden');
+              if (statusText) statusText.textContent = '▶ Tap to Play';
+            };
+
+            video.onended = cleanupVideo;
+            video.onpause = cleanupVideo;
+
             video.classList.remove('hidden');
             if (overlay) overlay.classList.add('hidden');
 
@@ -2348,8 +2457,12 @@ const ScrapCanvas = {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    if (elementData && elementData.strokes && elementData.strokes.length > 0) {
-      elementData.strokes.forEach(stroke => {
+    const strokesToDraw = (elementData && elementData._decryptedStrokes)
+      ? elementData._decryptedStrokes
+      : (elementData ? elementData.strokes : null);
+
+    if (strokesToDraw && strokesToDraw.length > 0) {
+      strokesToDraw.forEach(stroke => {
         if (!stroke.points || stroke.points.length < 1) return;
 
         if (stroke.points.length === 1) {
@@ -2540,10 +2653,12 @@ const ScrapCanvas = {
 
       // Determine baseline zIndex by type if not explicitly set
       let defaultZ = 1;
-      if (data.type === 'photo' || data.type === 'container') {
-        // Dynamic time-based zIndex sorting: newer photos/containers stack on top of older ones
+      if (data.type === 'container') {
+        defaultZ = 1;
+      } else if (data.type === 'photo') {
+        // Dynamic time-based zIndex sorting: newer photos stack on top of older ones
         const timeOffset = Math.floor(((data.updatedAt || Date.now()) - 1720000000000) / 1000);
-        defaultZ = 10 + Math.max(0, timeOffset);
+        defaultZ = 100 + Math.max(0, timeOffset);
       }
       else if (data.type === 'doodle') defaultZ = 1000000;
       else if (data.type === 'text' || data.type === 'sticker' || data.type === 'voice' || data.type === 'music' || data.type === 'video') defaultZ = 3000000; // Emojis/Stickers/Voice/Music/Video notes always default to on top of photos/doodles
@@ -2621,8 +2736,8 @@ const ScrapCanvas = {
 
   getMaxZIndex(type) {
     let maxZ = 0;
-    if (type === 'photo') maxZ = 10;
-    else if (type === 'container') maxZ = 500000;
+    if (type === 'container') maxZ = 1;
+    else if (type === 'photo') maxZ = 100;
     else if (type === 'doodle') maxZ = 1000000;
     else if (type === 'text' || type === 'sticker' || type === 'voice' || type === 'music' || type === 'video') maxZ = 2000000;
 
@@ -2653,12 +2768,12 @@ const ScrapCanvas = {
 
     // Increment and assign within its strict layer boundary
     let newZ = maxZ + 1;
-    if (data.type === 'photo') {
-      newZ = Math.max(10, newZ);
-      if (newZ > 499999) newZ = 10;
-    } else if (data.type === 'container') {
-      newZ = Math.max(500000, newZ);
-      if (newZ > 999999) newZ = 500000;
+    if (data.type === 'container') {
+      newZ = Math.max(1, newZ);
+      if (newZ > 99) newZ = 1;
+    } else if (data.type === 'photo') {
+      newZ = Math.max(100, newZ);
+      if (newZ > 999999) newZ = 100;
     } else if (data.type === 'doodle') {
       newZ = Math.max(1000000, newZ);
       if (newZ > 1999999) newZ = 1000000;
@@ -3551,9 +3666,14 @@ const ScrapCanvas = {
         const rowBg = isBlocked ? 'bg-rose-50 border-rose-200' : 'bg-transparent border-transparent';
         let avatarUrl = '';
         if (member.avatar) {
-          avatarUrl = `https://api.myscrapmemories.com/api/files/users/${uid}/${member.avatar}`;
+          avatarUrl = member.avatar.startsWith('data:') || member.avatar.startsWith('http')
+            ? member.avatar
+            : `https://api.myscrapmemories.com/api/files/users/${uid}/${member.avatar}`;
         } else if (isMe && window.pb && pb.authStore.model && pb.authStore.model.avatar) {
-          avatarUrl = `https://api.myscrapmemories.com/api/files/users/${uid}/${pb.authStore.model.avatar}`;
+          const myAvatar = pb.authStore.model.avatar;
+          avatarUrl = myAvatar.startsWith('data:') || myAvatar.startsWith('http')
+            ? myAvatar
+            : `https://api.myscrapmemories.com/api/files/users/${uid}/${myAvatar}`;
         }
 
         const itemEl = document.createElement('div');
