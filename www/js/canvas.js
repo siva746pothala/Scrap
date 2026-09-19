@@ -990,17 +990,46 @@ const ScrapCanvas = {
 
     // Cache elements to local storage to prevent positioning race conditions during re-syncs
     if (ScrapFirebase.roomId && map) {
-      localStorage.setItem(`scrap_elements_cache_${ScrapFirebase.roomId}`, JSON.stringify(map));
+      try {
+        const cleanMap = {};
+        for (const [k, el] of Object.entries(map)) {
+          if (!el) continue;
+          const { _decryptedDataUrl, _decryptedSrc, _decryptedStrokes, ...rest } = el;
+          cleanMap[k] = rest;
+        }
+        localStorage.setItem(`scrap_elements_cache_${ScrapFirebase.roomId}`, JSON.stringify(cleanMap));
+      } catch (storageErr) {
+        // Automatically purge stale local element caches if browser storage quota is exceeded
+        try {
+          for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && (k.startsWith('scrap_elements_cache_') || k.startsWith('scrap_local_') || k.startsWith('scrap_cache_time_'))) {
+              localStorage.removeItem(k);
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     if (!this.hasCenteredInitially && Object.keys(map).length > 0) {
-      const activePhotos = Object.values(map).filter(
-        el => el && el.type === 'photo' && (el.date === this.currentDate)
+      // Find all active elements for the current date across all categories
+      const activeElements = Object.values(map).filter(
+        el => el && (el.date || this.currentDate) === this.currentDate
       );
-      if (activePhotos.length > 0) {
-        activePhotos.sort((a, b) => (Number(a.y) || 0) - (Number(b.y) || 0));
-        const focusPhoto = activePhotos[0];
-        this.centerOnElement(Number(focusPhoto.x) || 2412, Number(focusPhoto.y) || 2400, 224, 250, false);
+
+      // Prefer main content items (photos, containers, videos, audio, text, stickers)
+      const primaryItems = activeElements.filter(
+        el => ['photo', 'container', 'video', 'voice', 'audio', 'music', 'text', 'sticker'].includes(el.type)
+      );
+
+      const targetList = primaryItems.length > 0 ? primaryItems : activeElements;
+
+      if (targetList.length > 0) {
+        targetList.sort((a, b) => (Number(a.y) || 0) - (Number(b.y) || 0));
+        const focusEl = targetList[0];
+        const elW = focusEl.width || (focusEl.type === 'photo' ? 192 : 160);
+        const elH = focusEl.height || (focusEl.type === 'photo' ? 216 : 60);
+        this.centerOnElement(Number(focusEl.x) || 2400, Number(focusEl.y) || 2400, elW, elH, false);
       } else {
         this.centerOnElement(2500, 2500, 0, 0, true);
       }
@@ -2083,47 +2112,41 @@ const ScrapCanvas = {
       if (!existingVideo) {
         contentContainer.innerHTML = `
           <div class="video-sticker-container flex flex-col items-center gap-2.5 w-full h-full">
-            <!-- Camcorder Tape Label -->
-            <div class="video-label-strip rounded-full py-1 truncate px-2.5 uppercase tracking-widest font-extrabold font-mono text-center shadow-[0_0_12px_rgba(0,240,255,0.3)] border border-[#00f0ff]/40"
-                 style="background: rgba(18, 9, 32, 0.85) !important; color: #00f0ff !important; font-size: 9px !important; line-height: 12px !important; backdrop-filter: blur(4px); width: 140px;">
-              ${timeLabel}
+            <!-- Vintage Film Reel Label Strip -->
+            <div class="video-label-strip rounded-full py-1 truncate px-3 uppercase tracking-widest font-extrabold font-mono text-center shadow-[0_4px_15px_rgba(0,0,0,0.5)] border border-amber-500/30"
+                 style="background: linear-gradient(135deg, rgba(30, 24, 18, 0.92), rgba(15, 12, 10, 0.95)) !important; color: #fbbf24 !important; font-size: 9px !important; line-height: 12px !important; backdrop-filter: blur(8px); width: 145px;">
+              🎬 ${timeLabel}
             </div>
-            <!-- Video Frame / Viewfinder -->
-            <div class="video-card relative bg-[#090312] border border-white/10 rounded-2xl shadow-[0_15px_35px_rgba(0,0,0,0.6),0_0_15px_rgba(255,0,171,0.25)] flex items-center justify-center overflow-hidden cursor-pointer select-none transition-all duration-300 hover:scale-[1.03] hover:shadow-[0_20px_40px_rgba(0,0,0,0.8),0_0_25px_rgba(255,0,171,0.4)]" style="outline: 1px solid rgba(255, 0, 171, 0.3); outline-offset: -3px; width: 170px; height: 125px;">
-              <!-- CRT Scanline overlay -->
-              <div class="absolute inset-0 pointer-events-none opacity-40 mix-blend-overlay" style="background: repeating-linear-gradient(0deg, rgba(0,0,0,0.15), rgba(0,0,0,0.15) 1px, transparent 1px, transparent 2px);"></div>
+            <!-- Vintage Polarized Reel Video Frame -->
+            <div class="video-card relative bg-[#17120e] border-2 border-amber-900/30 rounded-2xl shadow-[0_15px_35px_rgba(0,0,0,0.7),0_0_20px_rgba(245,158,11,0.2)] flex items-center justify-center overflow-hidden cursor-pointer select-none transition-all duration-300 hover:scale-[1.03] hover:shadow-[0_20px_45px_rgba(0,0,0,0.85),0_0_30px_rgba(245,158,11,0.35)]" style="outline: 2px solid rgba(245, 158, 11, 0.25); outline-offset: -4px; width: 175px; height: 128px;">
+              <!-- Film Reel Side Perforations -->
+              <div class="absolute left-1 top-0 bottom-0 flex flex-col justify-around pointer-events-none z-10 opacity-40">
+                <div class="w-1 h-1.5 rounded-sm bg-amber-500/50"></div>
+                <div class="w-1 h-1.5 rounded-sm bg-amber-500/50"></div>
+                <div class="w-1 h-1.5 rounded-sm bg-amber-500/50"></div>
+              </div>
+              <div class="absolute right-1 top-0 bottom-0 flex flex-col justify-around pointer-events-none z-10 opacity-40">
+                <div class="w-1 h-1.5 rounded-sm bg-amber-500/50"></div>
+                <div class="w-1 h-1.5 rounded-sm bg-amber-500/50"></div>
+                <div class="w-1 h-1.5 rounded-sm bg-amber-500/50"></div>
+              </div>
+              
+              <!-- Subtle Grain & Warm Vignette Overlay -->
+              <div class="absolute inset-0 pointer-events-none opacity-30 mix-blend-overlay" style="background: radial-gradient(circle, transparent 50%, rgba(0,0,0,0.8) 100%);"></div>
               
               <!-- Inline Video Player -->
               <video class="w-full h-full object-cover hidden pointer-events-none" playsinline loop></video>
               
               <!-- Video Poster / Play Button Overlay -->
-              <div class="video-poster-overlay absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-[#120921]/60 to-purple-950/45 transition-colors duration-300">
-                <!-- Custom Camcorder Viewfinder Overlays -->
-                <!-- Top Left: REC indicator -->
-                <div class="absolute top-2 left-2.5 flex items-center gap-1.5 pointer-events-none select-none">
-                  <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
-                  <span class="w-1.5 h-1.5 rounded-full bg-red-600 absolute"></span>
-                  <span class="text-[7px] font-mono font-black text-red-500 tracking-wider">REC</span>
-                </div>
-                <!-- Top Right: Battery/STBY -->
-                <div class="absolute top-2 right-2.5 flex items-center gap-1 pointer-events-none select-none">
-                  <span class="text-[7px] font-mono text-[#00f0ff] font-bold">STBY</span>
-                  <span class="text-[7px] font-mono text-white/50">SP 1080P</span>
-                </div>
-                <!-- Four Viewfinder Corner brackets -->
-                <div class="absolute top-2 left-2 w-1.5 h-1.5 border-t border-l border-white/40 pointer-events-none"></div>
-                <div class="absolute top-2 right-2 w-1.5 h-1.5 border-t border-r border-white/40 pointer-events-none"></div>
-                <div class="absolute bottom-2 left-2 w-1.5 h-1.5 border-b border-l border-white/40 pointer-events-none"></div>
-                <div class="absolute bottom-2 right-2 w-1.5 h-1.5 border-b border-r border-white/40 pointer-events-none"></div>
-                
-                <!-- Glowing Neo-Retro Play Button -->
-                <div class="w-11 h-11 rounded-full bg-black/40 border border-white/10 backdrop-filter blur-[1px] flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-transform duration-300 hover:scale-110 active:scale-95">
-                  <svg class="w-4 h-4 text-white fill-current filter drop-shadow-[0_0_4px_rgba(255,255,255,0.6)]" viewBox="0 0 24 24">
+              <div class="video-poster-overlay absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-black/80 via-black/40 to-transparent transition-colors duration-300">
+                <!-- Glowing Amber Reel Play Button -->
+                <div class="w-12 h-12 rounded-full bg-amber-500/20 border-2 border-amber-400/50 backdrop-blur-md flex items-center justify-center shadow-[0_0_20px_rgba(245,158,11,0.4)] transition-all duration-300 hover:scale-110 hover:bg-amber-500/30 active:scale-95">
+                  <svg class="w-5 h-5 text-amber-300 fill-current translate-x-0.5 filter drop-shadow-[0_0_6px_rgba(245,158,11,0.8)]" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z"/>
                   </svg>
                 </div>
                 
-                <span class="text-[8px] font-mono text-white/70 uppercase tracking-widest mt-2.5 font-bold drop-shadow-sm select-none hidden"></span>
+                <span class="text-[8px] font-mono text-amber-200/80 uppercase tracking-widest mt-2 font-bold drop-shadow select-none">TAP TO PLAY</span>
               </div>
             </div>
           </div>
@@ -2419,31 +2442,37 @@ const ScrapCanvas = {
         const base64 = ScrapCrypto.arrayBufferToBase64(decrypted);
         const url = `data:image/jpeg;base64,${base64}`;
 
-        const img = container.querySelector('img');
-        const loader = container.querySelector('.loading-label');
-        if (img && loader) {
+        const liveEl = document.getElementById(`element-${id}`) || container;
+        const img = liveEl ? liveEl.querySelector('img') : null;
+        const loader = liveEl ? liveEl.querySelector('.loading-label') : null;
+
+        if (this.elements && this.elements[id]) {
+          this.elements[id]._decryptedDataUrl = url;
+        }
+        if (img) {
           img.src = url;
           img.classList.remove('hidden');
+        }
+        if (loader) {
           loader.classList.add('hidden');
-
-          // The reel can open before decryption finishes. Keep its active slide in sync.
-          if (this.storyReelItems && this.storyReelItems[this.storyReelIndex] &&
-            this.storyReelItems[this.storyReelIndex].id === id) {
-            const reelImg = document.getElementById('story-reel-img');
-            if (reelImg) reelImg.src = url;
-          }
         }
 
+        // The reel can open before decryption finishes. Keep its active slide in sync.
+        if (this.storyReelItems && this.storyReelItems[this.storyReelIndex] &&
+          this.storyReelItems[this.storyReelIndex].id === id) {
+          const reelImg = document.getElementById('story-reel-img');
+          if (reelImg) reelImg.src = url;
+        }
       } catch (e) {
-
-        const loader = container.querySelector('.loading-label');
+        const liveEl = document.getElementById(`element-${id}`) || container;
+        const loader = liveEl ? liveEl.querySelector('.loading-label') : null;
         if (loader) {
           loader.innerText = '⚠️ Decrypt Error';
           loader.className = 'text-xs text-alert-pink';
         }
       }
     }).catch(err => {
-
+      console.warn('[decryptAndDisplayImage] Queue error:', err);
     });
   },
 
@@ -5538,6 +5567,641 @@ const ScrapCanvas = {
       if (musicIcon) musicIcon.textContent = '🎵';
       this.startBackgroundMusic();
     }
+  },
+  async exportCanvasToImage() {
+    const keys = Object.keys(this.elements || {});
+    if (keys.length === 0) {
+      throw new Error('Canvas is currently empty.');
+    }
+
+    // 1. First priority: Gather all elements currently rendered and visible on screen in DOM
+    let visibleKeys = keys.filter(k => {
+      const domEl = document.getElementById(`element-${k}`);
+      if (!domEl) return false;
+      if (domEl.classList.contains('hidden') || domEl.style.display === 'none' || domEl.classList.contains('element-filtered-dimmed')) {
+        return false;
+      }
+      return true;
+    });
+
+    // 2. Second priority: If no DOM elements visible, filter elements by active date picker
+    if (visibleKeys.length === 0) {
+      const datePicker = document.getElementById('canvas-date-picker');
+      const todayStr = new Date().toISOString().split('T')[0];
+      const activeDate = (datePicker && datePicker.value) ? datePicker.value : (this.currentDate || todayStr);
+
+      visibleKeys = keys.filter(k => {
+        const el = this.elements[k];
+        if (!el) return false;
+        let elDate = el.date;
+        if (!elDate && el.createdAt) {
+          try { elDate = new Date(el.createdAt).toISOString().split('T')[0]; } catch (_) {}
+        }
+        if (!elDate) elDate = todayStr;
+        return elDate === activeDate;
+      });
+    }
+
+    const targetKeys = visibleKeys.length > 0 ? visibleKeys : keys;
+    if (targetKeys.length === 0) {
+      throw new Error('No items found on canvas board to export.');
+    }
+
+    // Guarantee all target photos are 100% decrypted before generating PNG screenshot
+    const decryptPromises = targetKeys.map(async (id) => {
+      const data = this.elements[id];
+      if (!data || (data.type !== 'photo' && data.type !== 'image')) return;
+
+      const domEl = document.getElementById(`element-${id}`);
+      const photoImg = domEl ? domEl.querySelector('img') : null;
+
+      // Skip if already decrypted in memory or DOM
+      if (data._decryptedDataUrl || (photoImg && photoImg.src && photoImg.src.length > 50 && !photoImg.classList.contains('hidden'))) {
+        return;
+      }
+
+      if (data.encryptedData || data.fileId) {
+        try {
+          await this.decryptAndDisplayImage(id, data.encryptedData || data.fileId, domEl || document.body);
+        } catch (_) {}
+      }
+    });
+
+    await Promise.all(decryptPromises);
+
+    // Calculate exact bounding box of visible canvas items (accounting for DOM dimensions, scale, rotation & doodles)
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    targetKeys.forEach(k => {
+      const el = this.elements[k];
+      if (!el) return;
+
+      const domEl = document.getElementById(`element-${k}`);
+      const scale = el.scale || 1.0;
+      const x = el.x || 0;
+      const y = el.y || 0;
+      let w = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (el.width || 212);
+      let h = (domEl && domEl.offsetHeight > 0) ? domEl.offsetHeight : (el.height || 260);
+
+      // Force rectangular cassette tape aspect ratio for voice/music notes (200px x 115px)
+      if (el.type === 'voice' || el.type === 'audio' || el.type === 'music') {
+        w = Math.max(200, w);
+        h = Math.round(w * 0.575);
+      }
+
+      const scaledW = w * scale;
+      const scaledH = h * scale;
+      const rotation = (el.rotation || 0) * Math.PI / 180;
+
+      // Inspect doodle stroke points if present
+      if (el.type === 'doodle') {
+        const strokes = el._decryptedStrokes || el.strokes || [];
+        let hasPoints = false;
+        strokes.forEach(stroke => {
+          (stroke.points || []).forEach(p => {
+            if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+              hasPoints = true;
+              const px = x + (p.x * scale);
+              const py = y + (p.y * scale);
+              minX = Math.min(minX, px);
+              minY = Math.min(minY, py);
+              maxX = Math.max(maxX, px);
+              maxY = Math.max(maxY, py);
+            }
+          });
+        });
+        if (hasPoints) return;
+      }
+
+      // Calculate rotated 4 corners using exact scaled bounds
+      const cx = x + scaledW / 2;
+      const cy = y + scaledH / 2;
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+
+      const corners = [
+        { dx: -scaledW / 2, dy: -scaledH / 2 },
+        { dx: scaledW / 2, dy: -scaledH / 2 },
+        { dx: scaledW / 2, dy: scaledH / 2 },
+        { dx: -scaledW / 2, dy: -scaledH / 2 }
+      ];
+
+      corners.forEach(c => {
+        const rx = cx + (c.dx * cos - c.dy * sin);
+        const ry = cy + (c.dx * sin + c.dy * cos);
+        minX = Math.min(minX, rx);
+        minY = Math.min(minY, ry);
+        maxX = Math.max(maxX, rx);
+        maxY = Math.max(maxY, ry);
+      });
+    });
+
+    const padding = 35; // Tight 35px padding around exact design bounds
+    minX = Math.floor(minX - padding);
+    minY = Math.floor(minY - padding);
+    maxX = Math.ceil(maxX + padding);
+    maxY = Math.ceil(maxY + padding);
+
+    const width = Math.max(320, maxX - minX);
+    const height = Math.max(320, maxY - minY);
+
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = width;
+    exportCanvas.height = height;
+    const ctx = exportCanvas.getContext('2d');
+
+    // Draw dark purple grid background
+    ctx.fillStyle = '#120921';
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.lineWidth = 1;
+    const gridSize = 40;
+    for (let x = 0; x < width; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+    for (let y = 0; y < height; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+
+    // Draw target canvas elements in order
+    for (const id of targetKeys) {
+      const data = this.elements[id];
+      if (!data) continue;
+
+      const domEl = document.getElementById(`element-${id}`);
+      if (domEl && (domEl.classList.contains('hidden') || domEl.style.display === 'none')) {
+        continue;
+      }
+
+      ctx.save();
+      let elW = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (data.width || 212);
+      let elH = (domEl && domEl.offsetHeight > 0) ? domEl.offsetHeight : (data.height || 260);
+
+      if (data.type === 'text') {
+        elW = (domEl && domEl.offsetWidth > 0) ? domEl.offsetWidth : (data.width || 160);
+        elH = (domEl && domEl.offsetHeight > 0) ? domEl.offsetHeight : (data.height || 55);
+      }
+
+      if (data.type === 'voice' || data.type === 'audio' || data.type === 'music') {
+        elW = Math.max(200, elW);
+        elH = Math.round(elW * 0.575); // 200 x 115 rectangular ratio
+      }
+
+      const scale = data.scale || 1.0;
+      const elX = (data.x || 0) - minX;
+      const elY = (data.y || 0) - minY;
+      const rotation = (data.rotation || 0) * Math.PI / 180;
+
+      ctx.translate(elX + (elW * scale) / 2, elY + (elH * scale) / 2);
+      ctx.rotate(rotation);
+      ctx.scale(scale, scale);
+      ctx.translate(-elW / 2, -elH / 2);
+
+      if (data.type === 'doodle') {
+        const strokes = data._decryptedStrokes || data.strokes || [];
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        strokes.forEach(stroke => {
+          if (!stroke.points || stroke.points.length === 0) return;
+          ctx.beginPath();
+          ctx.strokeStyle = stroke.color || data.color || '#39ff14';
+          ctx.lineWidth = stroke.points[0]?.w || 4;
+          if (stroke.glow) {
+            ctx.shadowColor = ctx.strokeStyle;
+            ctx.shadowBlur = 10;
+          } else {
+            ctx.shadowBlur = 0;
+          }
+          if (stroke.points.length === 1) {
+            ctx.arc(stroke.points[0].x, stroke.points[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.fill();
+          } else {
+            ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+            for (let i = 1; i < stroke.points.length; i++) {
+              ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+            }
+            ctx.stroke();
+          }
+        });
+      } else if (data.type === 'image' || data.type === 'photo') {
+        const photoImg = domEl ? domEl.querySelector('img') : null;
+
+        // Draw Polaroid card background frame if it's a polaroid photo
+        if (data.type === 'photo') {
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = 'rgba(0,0,0,0.5)';
+          ctx.shadowBlur = 12;
+          ctx.shadowOffsetY = 6;
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 8); else ctx.rect(0, 0, elW, elH);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+
+        const innerPadding = data.type === 'photo' ? 8 : 0;
+        const photoH = data.type === 'photo' ? Math.max(20, elH - 32) : elH;
+
+        // Obtain image source from DOM img or decrypted cache or data payload
+        const imgSrc = (photoImg && photoImg.src && photoImg.src.length > 50)
+          ? photoImg.src
+          : (data._decryptedDataUrl || data.src);
+
+        if (imgSrc && typeof imgSrc === 'string' && imgSrc.length > 10) {
+          try {
+            await new Promise((resolve) => {
+              const tempImg = new Image();
+              tempImg.onload = () => {
+                try {
+                  ctx.drawImage(tempImg, innerPadding, innerPadding, elW - (innerPadding * 2), photoH);
+                } catch (_) {}
+                resolve();
+              };
+              tempImg.onerror = () => resolve();
+              tempImg.src = imgSrc;
+            });
+          } catch (_) {}
+        } else if (data.type === 'photo') {
+          // Placeholder frame if photo is still decrypting
+          ctx.fillStyle = '#1e1b29';
+          ctx.fillRect(innerPadding, innerPadding, elW - (innerPadding * 2), photoH);
+        }
+
+        // Render Polaroid Footer Caption Text
+        if (data.type === 'photo' && data.polaroidText) {
+          ctx.fillStyle = '#120921';
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(data.polaroidText, elW / 2, elH - 14);
+        }
+
+        // Render any attached stickers / doodles / emoji notes on top of photo card
+        if (data.stickers && typeof data.stickers === 'object') {
+          for (const [sId, s] of Object.entries(data.stickers)) {
+            if (!s) continue;
+            ctx.save();
+            const sx = (elW / 2) + (s.x || 0);
+            const sy = (elH / 2) + (s.y || 0);
+            const sW = s.width || 80;
+            const sH = s.height || 80;
+            const sRot = (s.rotation || 0) * Math.PI / 180;
+            const sScale = s.scale || 1.0;
+
+            ctx.translate(sx, sy);
+            ctx.rotate(sRot);
+            ctx.scale(sScale, sScale);
+            ctx.translate(-sW / 2, -sH / 2);
+
+            if (s.type === 'doodle') {
+              const sStrokes = s.strokes || [];
+              ctx.lineCap = 'round';
+              ctx.lineJoin = 'round';
+              sStrokes.forEach(stroke => {
+                if (!stroke.points || stroke.points.length === 0) return;
+                ctx.beginPath();
+                ctx.strokeStyle = stroke.color || s.color || '#39ff14';
+                ctx.lineWidth = stroke.points[0]?.w || 4;
+                if (stroke.points.length === 1) {
+                  ctx.arc(stroke.points[0].x, stroke.points[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
+                  ctx.fillStyle = ctx.strokeStyle;
+                  ctx.fill();
+                } else {
+                  ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+                  for (let i = 1; i < stroke.points.length; i++) {
+                    ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+                  }
+                  ctx.stroke();
+                }
+              });
+            } else if (s.type === 'sticker') {
+              if (s.src && typeof s.src === 'string') {
+                try {
+                  await new Promise((resolve) => {
+                    const tempImg = new Image();
+                    tempImg.onload = () => {
+                      try { ctx.drawImage(tempImg, 0, 0, sW, sH); } catch (_) {}
+                      resolve();
+                    };
+                    tempImg.onerror = () => resolve();
+                    tempImg.src = s.src;
+                  });
+                } catch (_) {}
+              }
+            } else if (s.text) {
+              let isEmoji = false;
+              try {
+                const emojiRegex = new RegExp('[\\p{Emoji_Presentation}\\p{Extended_Pictographic}]', 'u');
+                isEmoji = emojiRegex.test(s.text);
+              } catch (e) {
+                isEmoji = s.text.length <= 4 && /[^\x00-\x7F]/.test(s.text);
+              }
+
+              if (isEmoji) {
+                ctx.font = 'bold 36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(s.text, sW / 2, sH / 2);
+              } else {
+                ctx.fillStyle = 'rgba(88, 28, 135, 0.9)';
+                ctx.strokeStyle = '#39ff14';
+                ctx.lineWidth = 1;
+                ctx.fillRect(0, 0, sW, sH);
+                ctx.strokeRect(0, 0, sW, sH);
+
+                ctx.fillStyle = '#39ff14';
+                ctx.font = 'bold 12px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(s.text, sW / 2, sH / 2);
+              }
+            }
+            ctx.restore();
+          }
+        }
+      } else if (data.type === 'video') {
+        // Draw Vintage Polarized Reel video card frame
+        ctx.fillStyle = '#17120e';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 16); else ctx.rect(0, 0, elW, elH);
+        ctx.fill();
+        ctx.stroke();
+
+        const videoEl = domEl ? domEl.querySelector('video') : null;
+        let drawnVideoFrame = false;
+
+        if (videoEl && videoEl.videoWidth > 0) {
+          try {
+            ctx.drawImage(videoEl, 4, 4, elW - 8, elH - 8);
+            drawnVideoFrame = true;
+          } catch (_) {}
+        }
+
+        if (!drawnVideoFrame) {
+          const grad = ctx.createLinearGradient(0, 0, 0, elH);
+          grad.addColorStop(0, '#2d1f14');
+          grad.addColorStop(1, '#0e0b08');
+          ctx.fillStyle = grad;
+          ctx.fillRect(4, 4, elW - 8, elH - 8);
+        }
+
+        // Draw Play Button Overlay in center
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.85)';
+        ctx.beginPath();
+        ctx.arc(elW / 2, elH / 2, 22, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(elW / 2 - 6, elH / 2 - 10);
+        ctx.lineTo(elW / 2 + 10, elH / 2);
+        ctx.lineTo(elW / 2 - 6, elH / 2 + 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Top Reel Label Strip Badge
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        ctx.fillRect(8, 8, elW - 16, 18);
+        ctx.fillStyle = '#f59e0b';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('📹 VIDEO REEL', elW / 2, 17);
+      } else if (data.type === 'sticker') {
+        const stickerImg = domEl ? domEl.querySelector('img') : null;
+        const stickerSrc = (stickerImg && stickerImg.src && stickerImg.src.length > 30)
+          ? stickerImg.src
+          : (data._decryptedSrc || data.src);
+
+        if (stickerSrc && typeof stickerSrc === 'string') {
+          try {
+            await new Promise((resolve) => {
+              const tempImg = new Image();
+              tempImg.onload = () => {
+                try {
+                  ctx.drawImage(tempImg, 0, 0, elW, elH);
+                } catch (_) {}
+                resolve();
+              };
+              tempImg.onerror = () => resolve();
+              tempImg.src = stickerSrc;
+            });
+          } catch (_) {}
+        }
+      } else if (data.type === 'voice' || data.type === 'audio' || data.type === 'music') {
+        // Draw Vintage Retro Audio Cassette Tape Card (Matching DOM voice-cassette element)
+        const isSong = data.type === 'music' || (data.title && data.title.toLowerCase().includes('song'));
+        const parsedTime = parseInt(id.replace('voice_', '').replace('music_', ''));
+        const timestamp = data.createdAt || (isNaN(parsedTime) ? Date.now() : parsedTime);
+        const dateObj = new Date(timestamp);
+        const formattedDate = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const formattedTime = dateObj.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+        const timeLabel = isSong ? `🎵 SONG - ${formattedDate.toUpperCase()}` : `🗣 VOICE - ${formattedDate.toUpperCase()} ${formattedTime}`;
+
+        const bgColor1 = isSong ? '#0d051c' : '#1a0a2e';
+        const bgColor2 = isSong ? '#200e3b' : '#2d1b69';
+        const borderCol = isSong ? 'rgba(224,160,255,0.7)' : 'rgba(255,74,74,0.7)';
+        const textCol = isSong ? '#e0a0ff' : '#ff4a4a';
+        const labelBg = isSong ? '#e0a0ff' : '#ffffff';
+
+        // 1. Top Retro Label Strip
+        ctx.fillStyle = labelBg;
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(elW / 2 - 85, 0, 170, 14, 4); else ctx.rect(elW / 2 - 85, 0, 170, 14);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = '#120920';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(timeLabel, elW / 2, 7);
+
+        // 2. Cassette Body Box
+        const bodyY = 18;
+        const bodyH = Math.max(90, elH - 18);
+
+        const grad = ctx.createLinearGradient(0, bodyY, 0, bodyY + bodyH);
+        grad.addColorStop(0, bgColor1);
+        grad.addColorStop(1, bgColor2);
+        ctx.fillStyle = grad;
+        ctx.strokeStyle = borderCol;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(0, bodyY, elW, bodyH, 10); else ctx.rect(0, bodyY, elW, bodyH);
+        ctx.fill();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // 3. Written Title Tape Label (if present)
+        let spindleY = bodyY + bodyH / 2;
+        if (data.title) {
+          spindleY += 6;
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+          ctx.lineWidth = 1;
+          ctx.fillRect(10, bodyY + 6, elW - 20, 16);
+          ctx.strokeRect(10, bodyY + 6, elW - 20, 16);
+
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const t = data.title.toUpperCase();
+          ctx.fillText(t.length > 24 ? t.substring(0, 22) + '...' : t, elW / 2, bodyY + 14);
+        }
+
+        // 4. Left & Right Tape Spindle Wheels
+        const leftSpindleX = elW / 2 - 44;
+        const rightSpindleX = elW / 2 + 44;
+
+        // Left Spindle (42px orange reel + black wheel + spokes)
+        ctx.fillStyle = '#ff9800';
+        ctx.beginPath();
+        ctx.arc(leftSpindleX, spindleY, 19, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#000000';
+        ctx.strokeStyle = '#6b7280';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(leftSpindleX, spindleY, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isSong ? '#c084fc' : '#f87171';
+        ctx.fillRect(leftSpindleX - 1.5, spindleY - 9, 3, 18);
+        ctx.fillRect(leftSpindleX - 9, spindleY - 1.5, 18, 3);
+
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(leftSpindleX, spindleY, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Right Spindle (22px orange reel + black wheel + spokes)
+        ctx.fillStyle = '#ff9800';
+        ctx.beginPath();
+        ctx.arc(rightSpindleX, spindleY, 11, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#000000';
+        ctx.strokeStyle = '#6b7280';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(rightSpindleX, spindleY, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isSong ? '#c084fc' : '#f87171';
+        ctx.fillRect(rightSpindleX - 1.5, spindleY - 9, 3, 18);
+        ctx.fillRect(rightSpindleX - 9, spindleY - 1.5, 18, 3);
+
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(rightSpindleX, spindleY, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 5. Center Magnetic Tape Window & Play Symbol
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.fillRect(elW / 2 - 26, spindleY - 15, 52, 30);
+        ctx.strokeRect(elW / 2 - 26, spindleY - 15, 52, 30);
+
+        // Magnetic orange tape line
+        ctx.fillStyle = '#ff9800';
+        ctx.fillRect(elW / 2 - 26, spindleY - 1, 52, 2);
+
+        // Play Symbol
+        ctx.fillStyle = textCol;
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('▶', elW / 2, spindleY);
+      } else if (data.type === 'mood') {
+        // Draw Mood Emoji Badge
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, elH / 2); else ctx.rect(0, 0, elW, elH);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.font = 'bold 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(data.emoji || '😊', elW / 2, elH / 2);
+      } else if (data.type === 'text') {
+        const textContent = (domEl && domEl.innerText && domEl.innerText.trim().length > 0)
+          ? domEl.innerText.trim()
+          : (data._decryptedText || data.text || data.content || '💬 Note');
+
+        const bgColor = data.bgColor || (domEl ? getComputedStyle(domEl).backgroundColor : '') || 'rgba(18, 9, 33, 0.9)';
+        const textColor = data.textColor || data.color || (domEl ? getComputedStyle(domEl).color : '') || '#39ff14';
+        const borderColor = data.borderColor || data.color || 'rgba(0, 240, 255, 0.6)';
+
+        // Draw Rectangular Text Note Container Card
+        ctx.fillStyle = bgColor;
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = 'rgba(0,0,0,0.4)';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 10); else ctx.rect(0, 0, elW, elH);
+        ctx.fill();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Multi-line Word Wrap Text Rendering with exact font colors
+        ctx.fillStyle = textColor;
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const words = textContent.split(' ');
+        const lines = [];
+        let currentLine = '';
+        const maxTextWidth = Math.max(40, elW - 16);
+
+        for (let i = 0; i < words.length; i++) {
+          const testLine = currentLine ? (currentLine + ' ' + words[i]) : words[i];
+          const metrics = ctx.measureText(testLine);
+          if (metrics.width > maxTextWidth && currentLine) {
+            lines.push(currentLine);
+            currentLine = words[i];
+          } else {
+            currentLine = testLine;
+          }
+        }
+        if (currentLine) lines.push(currentLine);
+
+        const lineHeight = 16;
+        const totalTextH = lines.length * lineHeight;
+        const startY = (elH / 2) - (totalTextH / 2) + (lineHeight / 2);
+
+        lines.forEach((line, idx) => {
+          ctx.fillText(line, elW / 2, startY + (idx * lineHeight));
+        });
+      }
+
+      ctx.restore();
+    }
+
+    return exportCanvas.toDataURL('image/png');
   }
 };
 

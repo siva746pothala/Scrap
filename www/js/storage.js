@@ -32,7 +32,11 @@ const ScrapStorage = {
       await prefs.set({ key, value: strValue });
     }
     // Always mirror to localStorage as fallback
-    localStorage.setItem(key, strValue);
+    try {
+      localStorage.setItem(key, strValue);
+    } catch (e) {
+      console.warn('[ScrapStorage] localStorage set failed:', e);
+    }
   },
 
   async get(key) {

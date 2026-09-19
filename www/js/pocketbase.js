@@ -66,7 +66,28 @@ const ScrapFirebase = {
   },
 
   saveLocalRoomData(roomId, type, data) {
-    localStorage.setItem(`scrap_local_${type}_${roomId}`, JSON.stringify(data));
+    try {
+      if (type === 'elements' && data && typeof data === 'object') {
+        const cleanData = {};
+        for (const [k, el] of Object.entries(data)) {
+          if (!el) continue;
+          const { _decryptedDataUrl, _decryptedSrc, _decryptedStrokes, ...rest } = el;
+          cleanData[k] = rest;
+        }
+        localStorage.setItem(`scrap_local_${type}_${roomId}`, JSON.stringify(cleanData));
+        return;
+      }
+      localStorage.setItem(`scrap_local_${type}_${roomId}`, JSON.stringify(data));
+    } catch (e) {
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('scrap_elements_cache_') || k.startsWith('scrap_local_elements_') || k.startsWith('scrap_cache_time_'))) {
+            localStorage.removeItem(k);
+          }
+        }
+      } catch (_) {}
+    }
   },
 
   getLocalRoomData(roomId, type) {
@@ -990,25 +1011,42 @@ const ScrapFirebase = {
     });
   },
 
+  async getUserAvatarCryptoKey(targetUserId = null, roomId = null) {
+    // If a target user ID is provided (or current user logged in), personal avatars are encrypted with deterministic user key
+    const userId = targetUserId || (window.pb && pb.authStore.isValid && pb.authStore.model ? pb.authStore.model.id : null);
+    if (userId) {
+      const salt = new Uint8Array([115, 99, 114, 97, 112, 97, 118, 97]); // 'scrapava'
+      return await ScrapCrypto.deriveKeyFromPin(userId, salt);
+    }
+    let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+    if (roomKey && typeof roomKey === 'object' && roomKey.algorithm) return roomKey;
+    return null;
+  },
+
+  async getRoomAvatarCryptoKey(roomId) {
+    let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+    if (roomKey && typeof roomKey === 'object' && roomKey.algorithm) return roomKey;
+    return null;
+  },
+
   async uploadRoomAvatar(roomId, file) {
     if (!window.pb || !pb.authStore.isValid) {
       throw new Error('Not authenticated with PocketBase.');
     }
     const compressedFile = await this.compressImage(file, 50, 512);
     const formData = new FormData();
-    formData.append('avatar', '');
     let dataUrl = '';
 
     try {
-      const roomKey = await ScrapRecovery.getRoomKey(roomId);
+      const cryptoKey = await this.getRoomAvatarCryptoKey(roomId);
       dataUrl = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
         reader.onerror = () => resolve('');
         reader.readAsDataURL(compressedFile);
       });
-      if (roomKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
-        const encData = await ScrapCrypto.encryptText(dataUrl, roomKey);
+      if (cryptoKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, cryptoKey);
         formData.append('encrypted_avatar', encData);
       }
     } catch (cryptoErr) {
@@ -1025,21 +1063,19 @@ const ScrapFirebase = {
     }
     const compressedFile = await this.compressImage(file, 50, 512);
     const formData = new FormData();
-    formData.append('avatar', '');
     let dataUrl = '';
 
     try {
       const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
-      const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
-      const keyToUse = roomKey || pb.authStore.model.id;
+      const cryptoKey = await this.getUserAvatarCryptoKey(pb.authStore.model.id, roomId);
       dataUrl = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
         reader.onerror = () => resolve('');
         reader.readAsDataURL(compressedFile);
       });
-      if (keyToUse && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
-        const encData = await ScrapCrypto.encryptText(dataUrl, keyToUse);
+      if (cryptoKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, cryptoKey);
         formData.append('encrypted_avatar', encData);
       }
     } catch (cryptoErr) {
@@ -1047,7 +1083,6 @@ const ScrapFirebase = {
     }
 
     const updatedRecord = await pb.collection('users').update(pb.authStore.model.id, formData);
-    pb.authStore.model.avatar = '';
     if (updatedRecord.encrypted_avatar) {
       pb.authStore.model.encrypted_avatar = updatedRecord.encrypted_avatar;
     }
@@ -1060,21 +1095,19 @@ const ScrapFirebase = {
     }
     const compressedFile = await this.compressImage(file, 200, 1920);
     const formData = new FormData();
-    formData.append('custom_bg', '');
     let dataUrl = '';
 
     try {
       const roomId = this.roomId || localStorage.getItem('scrap_current_room_id');
-      const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
-      const keyToUse = roomKey || pb.authStore.model.id;
+      const cryptoKey = await this.getUserAvatarCryptoKey(pb.authStore.model.id, roomId);
       dataUrl = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
         reader.onerror = () => resolve('');
         reader.readAsDataURL(compressedFile);
       });
-      if (keyToUse && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
-        const encData = await ScrapCrypto.encryptText(dataUrl, keyToUse);
+      if (cryptoKey && dataUrl && window.ScrapCrypto && typeof ScrapCrypto.encryptText === 'function') {
+        const encData = await ScrapCrypto.encryptText(dataUrl, cryptoKey);
         formData.append('encrypted_custom_bg', encData);
       }
     } catch (cryptoErr) {
@@ -1082,7 +1115,6 @@ const ScrapFirebase = {
     }
 
     const updatedRecord = await pb.collection('users').update(pb.authStore.model.id, formData);
-    pb.authStore.model.custom_bg = '';
     if (updatedRecord.encrypted_custom_bg) {
       pb.authStore.model.encrypted_custom_bg = updatedRecord.encrypted_custom_bg;
     }

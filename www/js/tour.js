@@ -155,6 +155,14 @@ window.ScrapTour = (function () {
       requiresMenu: true
     },
     {
+      id: 'btn-share-canvas',
+      target: '#btn-share-canvas',
+      title: '📸 Share Canvas',
+      description: 'Export and share a high-resolution PNG snapshot of your canvas board directly to WhatsApp, Instagram, or native apps.',
+      position: 'bottom-right',
+      requiresMenu: true
+    },
+    {
       id: 'btn-canvas-recenter',
       target: '#btn-canvas-recenter',
       title: '🎯 Recenter View',

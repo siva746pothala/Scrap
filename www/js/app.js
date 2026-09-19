@@ -53,11 +53,12 @@ const ScrapApp = {
     if (user.encrypted_custom_bg && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
       try {
         const roomId = localStorage.getItem('scrap_current_room_id');
-        const roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
-        const keyToUse = roomKey || user.id;
-        const decBg = await ScrapCrypto.decryptText(user.encrypted_custom_bg, keyToUse);
-        if (decBg && decBg.startsWith('data:')) {
-          url = decBg;
+        const cryptoKey = window.ScrapFirebase ? await ScrapFirebase.getUserAvatarCryptoKey(user.id, roomId) : null;
+        if (cryptoKey) {
+          const decBg = await ScrapCrypto.decryptText(user.encrypted_custom_bg, cryptoKey);
+          if (decBg && decBg.startsWith('data:')) {
+            url = decBg;
+          }
         }
       } catch (_) { }
     }
@@ -69,24 +70,10 @@ const ScrapApp = {
     if (user.encrypted_avatar && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
       try {
         let roomId = localStorage.getItem('scrap_current_room_id');
-        let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+        let cryptoKey = window.ScrapFirebase ? await ScrapFirebase.getUserAvatarCryptoKey(user.id, roomId) : null;
 
-        // Fallback: If on dashboard after app restart & RAM clear, look up room key from user rooms
-        if (!roomKey && window.ScrapFirebase && typeof ScrapFirebase.getUserRooms === 'function') {
-          const rooms = await ScrapFirebase.getUserRooms(user.id);
-          for (const r of (rooms || [])) {
-            if (r && r.id) {
-              const k = await ScrapRecovery.getRoomKey(r.id);
-              if (k) {
-                roomKey = k;
-                break;
-              }
-            }
-          }
-        }
-
-        if (roomKey) {
-          const decAvatar = await ScrapCrypto.decryptText(user.encrypted_avatar, roomKey);
+        if (cryptoKey) {
+          const decAvatar = await ScrapCrypto.decryptText(user.encrypted_avatar, cryptoKey);
           if (decAvatar && decAvatar.startsWith('data:')) {
             avatarUrl = decAvatar;
           }
@@ -3440,6 +3427,119 @@ const ScrapApp = {
       });
     }
 
+    // Share Canvas Action Button (WhatsApp, Instagram, Gmail, Native Share Sheet)
+    const btnShareCanvas = document.getElementById('btn-share-canvas');
+    if (btnShareCanvas) {
+      btnShareCanvas.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          const currentRoomId = this.currentRoomId || '';
+          const storedIsGroup = localStorage.getItem('scrap_room_is_group_' + currentRoomId);
+          const isGroupVault = storedIsGroup === 'true' || (window.ScrapFirebase && ScrapFirebase.isGroupVault === true);
+
+          if (isGroupVault) {
+            await window.ScrapDialog.alert('🔒 Sharing disabled for Group Squad Vaults to protect member privacy.');
+            return;
+          }
+
+          if (!window.ScrapCanvas || typeof ScrapCanvas.exportCanvasToImage !== 'function') {
+            await window.ScrapDialog.alert('Canvas export engine not initialized.');
+            return;
+          }
+
+          const pngDataUrl = await ScrapCanvas.exportCanvasToImage();
+          const title = this.currentRoomTitle || 'Mitrava Space';
+          const cleanTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
+          const fileName = `${cleanTitle}_canvas.png`;
+
+          // 1. Capacitor Native Share Plugin (Primary Native Android/iOS Share Sheet with image attached)
+          const SharePlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Share;
+          const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+
+          if (Filesystem && pngDataUrl.includes('base64,')) {
+            try {
+              const base64Data = pngDataUrl.split('base64,')[1];
+              const writeRes = await Filesystem.writeFile({
+                path: fileName,
+                data: base64Data,
+                directory: 'CACHE'
+              });
+
+              if (SharePlugin && typeof SharePlugin.share === 'function') {
+                await SharePlugin.share({
+                  title: `Mitrava Space - ${title}`,
+                  text: `Check out our canvas space "${title}" on Mitrava!`,
+                  files: [writeRes.uri],
+                  dialogTitle: 'Share Canvas Space'
+                });
+                return;
+              }
+            } catch (fsShareErr) {
+              if (fsShareErr.name === 'AbortError' || fsShareErr.message?.includes('canceled')) return;
+            }
+          }
+
+          // 2. Fallback to Web Share API if supported
+          if (navigator.share) {
+            try {
+              const res = await fetch(pngDataUrl);
+              const blob = await res.blob();
+              const file = new File([blob], fileName, { type: 'image/png' });
+
+              if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                  title: `Mitrava Space - ${title}`,
+                  text: `Check out our canvas space "${title}" on Mitrava!`,
+                  files: [file]
+                });
+                return;
+              }
+            } catch (shareErr) {
+              if (shareErr.name === 'AbortError') return;
+            }
+          }
+
+          // Fallback share options menu if native share is unavailable
+          const optIdx = await window.ScrapDialog.showOptions('📲 Share Canvas Space', [
+            '💬 WhatsApp',
+            '✉️ Email / Gmail',
+            '💾 Download Image File'
+          ]);
+
+          const shareText = encodeURIComponent(`Check out our canvas space "${title}" on Mitrava!`);
+
+          if (optIdx === 0) {
+            window.open(`https://api.whatsapp.com/send?text=${shareText}`, '_blank');
+          } else if (optIdx === 1) {
+            window.location.href = `mailto:?subject=${encodeURIComponent('Mitrava Canvas: ' + title)}&body=${shareText}`;
+          } else if (optIdx === 2) {
+            const a = document.createElement('a');
+            a.href = pngDataUrl;
+            a.download = fileName;
+            a.click();
+          }
+        } catch (err) {
+          await window.ScrapDialog.alert('Could not share canvas: ' + err.message);
+        } finally {
+          // Explicit RAM & Cache file cleanup
+          setTimeout(async () => {
+            const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+            if (Filesystem) {
+              try {
+                const title = this.currentRoomTitle || 'Mitrava Space';
+                const cleanTitle = title.replace(/[^a-zA-Z0-9]/g, '_');
+                await Filesystem.deleteFile({
+                  path: `${cleanTitle}_canvas.png`,
+                  directory: 'CACHE'
+                });
+              } catch (_) {}
+            }
+          }, 1500);
+        }
+      });
+    }
+
     // Export Cryptographic Backup Action Button
     const btnExportBackup = document.getElementById('btn-export-backup');
     if (btnExportBackup) {
@@ -6516,6 +6616,27 @@ const ScrapApp = {
           </div>
         `;
       }
+
+      // Automatically refresh user profile avatar & custom theme background UI
+      if (window.pb && pb.authStore.isValid && pb.authStore.model) {
+        const user = pb.authStore.model;
+        if (user.encrypted_avatar || user.avatar) {
+          this.resolveUserAvatarUrl(user).then(url => {
+            if (url) {
+              const avatarImg = document.getElementById('dashboard-avatar');
+              const avatarPlaceholder = document.getElementById('dashboard-avatar-placeholder');
+              if (avatarImg) {
+                avatarImg.src = url;
+                avatarImg.classList.remove('hidden');
+              }
+              if (avatarPlaceholder) {
+                avatarPlaceholder.classList.add('hidden');
+              }
+            }
+          }).catch(() => {});
+        }
+      }
+
       let rooms = await ScrapFirebase.getUserRooms(ScrapFirebase.userId);
 
       // Filter out duplicates by ID
@@ -6528,6 +6649,7 @@ const ScrapApp = {
             uniqueRooms.push(r);
             const isOwnerOfRoom = r.createdBy === ScrapFirebase.userId;
             localStorage.setItem('scrap_room_is_owner_' + r.id, isOwnerOfRoom ? 'true' : 'false');
+            localStorage.setItem('scrap_room_is_group_' + r.id, r.isGroup ? 'true' : 'false');
             localStorage.setItem('scrap_room_title_' + r.id, r.title);
           }
         }
@@ -6594,9 +6716,12 @@ const ScrapApp = {
         let avatarUrl = r.avatar ? `https://api.myscrapmemories.com/api/files/boards/${r.id}/${r.avatar}` : '';
         if (r.encrypted_avatar && window.ScrapCrypto && typeof ScrapCrypto.decryptText === 'function') {
           try {
-            const roomKey = await ScrapRecovery.getRoomKey(r.id);
-            if (roomKey) {
-              const decAvatar = await ScrapCrypto.decryptText(r.encrypted_avatar, roomKey);
+            let cryptoKey = await ScrapRecovery.getRoomKey(r.id);
+            if (!cryptoKey && window.ScrapFirebase && typeof ScrapFirebase.getUserAvatarCryptoKey === 'function') {
+              cryptoKey = await ScrapFirebase.getUserAvatarCryptoKey(r.id);
+            }
+            if (cryptoKey) {
+              const decAvatar = await ScrapCrypto.decryptText(r.encrypted_avatar, cryptoKey);
               if (decAvatar && decAvatar.startsWith('data:')) {
                 avatarUrl = decAvatar;
               }
@@ -7388,6 +7513,7 @@ const ScrapApp = {
             key = await ScrapRecovery.getRoomKey(roomId);
             if (key) {
               await window.ScrapDialog.alert('✅ Identity and Room Keys restored & merged successfully! Room unlocked.');
+              this.renderDashboardRooms();
             } else {
               throw new Error('Identity restored but Room Key for this room is missing in this backup.');
             }
@@ -7649,7 +7775,42 @@ const ScrapApp = {
           );
           if (shouldRestoreViewport && hasVisibleRoomElements) {
             shouldRestoreViewport = false;
-            ScrapCanvas.restoreScrollPosition(parseInt(savedLeftVal, 10), parseInt(savedTopVal, 10));
+            const targetLeft = parseInt(savedLeftVal, 10);
+            const targetTop = parseInt(savedTopVal, 10);
+
+            // Check if saved scroll position actually puts at least one room element in viewport view
+            const workspace = document.getElementById('canvas-workspace');
+            const wsWidth = workspace ? (workspace.clientWidth || 800) : 800;
+            const wsHeight = workspace ? (workspace.clientHeight || 800) : 800;
+            const boardMargin = 3000;
+            const zoom = ScrapCanvas.zoom || 1.0;
+
+            const isAnyItemInView = Object.values(elements || {}).some(el => {
+              if (!el || (el.date || ScrapCanvas.currentDate) !== ScrapCanvas.currentDate) return false;
+              const elLeft = Math.round(boardMargin + zoom * (Number(el.x) || 2400));
+              const elTop = Math.round(boardMargin + zoom * (Number(el.y) || 2400));
+              const elRight = elLeft + (el.width || 192) * zoom;
+              const elBottom = elTop + (el.height || 216) * zoom;
+
+              const viewLeft = targetLeft;
+              const viewTop = targetTop;
+              const viewRight = targetLeft + wsWidth;
+              const viewBottom = targetTop + wsHeight;
+
+              return (elRight >= viewLeft - 100 && elLeft <= viewRight + 100 &&
+                      elBottom >= viewTop - 100 && elTop <= viewBottom + 100);
+            });
+
+            if (isAnyItemInView) {
+              ScrapCanvas.restoreScrollPosition(targetLeft, targetTop);
+            } else {
+              // Saved position points to empty space — clear stale position and force auto-centering
+              localStorage.removeItem(`canvas_scroll_left_${roomId}`);
+              localStorage.removeItem(`canvas_scroll_top_${roomId}`);
+              ScrapCanvas.hasCenteredInitially = false;
+              // Re-run renderElements to trigger auto-centering on actual elements
+              ScrapCanvas.renderElements(elements);
+            }
           }
           this.renderMoodCalendarFeed(elements);
         },
