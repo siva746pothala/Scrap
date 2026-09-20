@@ -1818,8 +1818,28 @@ const ScrapApp = {
         if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
           window.Capacitor.Plugins.App.addListener('appStateChange', (state) => {
             console.log('[ScrapApp] App state changed. isActive:', state.isActive);
-            if (window.ScrapFirebase && typeof ScrapFirebase.flushPendingSyncQueue === 'function') {
-              ScrapFirebase.flushPendingSyncQueue();
+            if (!state.isActive) {
+              // Pause active timers when app is minimized / screen turned off
+              if (this.activeMembersPruneInterval) {
+                clearInterval(this.activeMembersPruneInterval);
+                this.activeMembersPruneInterval = null;
+              }
+            } else {
+              // Resume active timers & flush pending sync queue when app re-enters foreground
+              if (window.ScrapFirebase && typeof ScrapFirebase.flushPendingSyncQueue === 'function') {
+                ScrapFirebase.flushPendingSyncQueue();
+              }
+              if (this.activeScreen === 'screen-canvas' && window.ScrapCanvas) {
+                ScrapCanvas.reportPresence();
+                if (!this.activeMembersPruneInterval) {
+                  this.activeMembersPruneInterval = setInterval(() => {
+                    if (this.activeScreen === 'screen-canvas' && window.ScrapCanvas) {
+                      ScrapCanvas.reportPresence();
+                      ScrapCanvas.updateActiveMembersListUI();
+                    }
+                  }, 30000);
+                }
+              }
             }
           });
         }
@@ -5963,106 +5983,106 @@ const ScrapApp = {
 
     this.showScreen('screen-canvas');
 
-    // 1. Render on Canvas locally to run safety screening
-    const img = new Image();
+    return new Promise((resolve) => {
+      // 1. Render on Canvas locally to run safety screening
+      const img = new Image();
 
-    img.onerror = () => {
-      if (progressToast) progressToast.classList.add('hidden');
-      alert('Failed to load image file.');
-    };
-
-    img.onload = async () => {
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-
-      // Downscale locally to save bandwidth
-      const maxDim = 2048; // Increased from 350 to allow higher quality photos under 200KB limit
-      let w = img.width;
-      let h = img.height;
-      if (w > maxDim || h > maxDim) {
-        if (w > h) {
-          h = Math.round((h * maxDim) / w);
-          w = maxDim;
-        } else {
-          w = Math.round((w * maxDim) / h);
-          h = maxDim;
-        }
-      }
-
-      canvas.width = w;
-      canvas.height = h;
-      ctx.drawImage(img, 0, 0, w, h);
-
-      // 2. Perform safety moderation BEFORE encryption or network upload
-      const result = await ScrapSafety.checkSafety(canvas);
-
-      if (!result.safe) {
-        // Block and purge RAM
-        ctx.clearRect(0, 0, w, h);
-        canvas.width = 0;
-        canvas.height = 0;
-
-        // Hide progress spinner
+      img.onerror = () => {
         if (progressToast) progressToast.classList.add('hidden');
+        alert('Failed to load image file.');
+        resolve();
+      };
 
-        // Show Strict Safety guard overlay
-        document.getElementById('safety-guard-overlay').classList.remove('hidden');
-        return;
-      }
+      img.onload = async () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
 
-      // 3. Encrypt in RAM using SubtleCrypto room key
-      let roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
-      if (!roomKey) {
-        if (progressToast) progressToast.classList.add('hidden');
-        throw new Error('Decryption key for this room is missing. Please re-join the room.');
-      }
-
-      try {
-
-        // Helper function to compress canvas to blob <= 200KB safely without freezing UI
-        const compressToBlob = async (initialCanvas) => {
-          let quality = 0.8;
-          let currentCanvas = initialCanvas;
-          const targetSize = 200 * 1024; // 200KB
-          let attempts = 0;
-          const maxAttempts = 12;
-
-          while (attempts < maxAttempts) {
-            attempts++;
-            const blob = await new Promise((resolve) => {
-              currentCanvas.toBlob(resolve, 'image/jpeg', quality);
-            });
-
-            if (!blob) {
-              throw new Error('Failed to generate image blob');
-            }
-
-            if (blob.size <= targetSize || (quality <= 0.1 && currentCanvas.width <= 100) || attempts >= maxAttempts) {
-              return blob;
-            }
-
-            // Yield control briefly to keep UI responsive during heavy canvas operations
-            await new Promise((r) => setTimeout(r, 0));
-
-            if (quality > 0.3) {
-              quality -= 0.15;
+          // Downscale locally to save bandwidth
+          const maxDim = 2048; // Increased from 350 to allow higher quality photos under 200KB limit
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
             } else {
-              // Scale down canvas if quality is already low
-              const newCanvas = document.createElement('canvas');
-              const newCtx = newCanvas.getContext('2d');
-              newCanvas.width = Math.max(1, Math.round(currentCanvas.width * 0.7));
-              newCanvas.height = Math.max(1, Math.round(currentCanvas.height * 0.7));
-              newCtx.drawImage(currentCanvas, 0, 0, newCanvas.width, newCanvas.height);
-              currentCanvas = newCanvas;
-              quality = 0.8; // reset quality for resized canvas
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
             }
           }
-          return null;
-        };
 
-        const blob = await compressToBlob(canvas);
-        try {
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+
+          // 2. Perform safety moderation BEFORE encryption or network upload
+          const result = await ScrapSafety.checkSafety(canvas);
+
+          if (!result.safe) {
+            // Block and purge RAM
+            ctx.clearRect(0, 0, w, h);
+            canvas.width = 0;
+            canvas.height = 0;
+
+            // Hide progress spinner
+            if (progressToast) progressToast.classList.add('hidden');
+
+            // Show Strict Safety guard overlay
+            document.getElementById('safety-guard-overlay').classList.remove('hidden');
+            resolve();
+            return;
+          }
+
+          // 3. Encrypt in RAM using SubtleCrypto room key
+          let roomKey = await ScrapRecovery.getRoomKey(this.currentRoomId);
+          if (!roomKey) {
+            if (progressToast) progressToast.classList.add('hidden');
+            throw new Error('Decryption key for this room is missing. Please re-join the room.');
+          }
+
+          // Helper function to compress canvas to blob <= 200KB safely without freezing UI
+          const compressToBlob = async (initialCanvas) => {
+            let quality = 0.8;
+            let currentCanvas = initialCanvas;
+            const targetSize = 200 * 1024; // 200KB
+            let attempts = 0;
+            const maxAttempts = 12;
+
+            while (attempts < maxAttempts) {
+              attempts++;
+              const blob = await new Promise((res) => {
+                currentCanvas.toBlob(res, 'image/jpeg', quality);
+              });
+
+              if (!blob) {
+                throw new Error('Failed to generate image blob');
+              }
+
+              if (blob.size <= targetSize || (quality <= 0.1 && currentCanvas.width <= 100) || attempts >= maxAttempts) {
+                return blob;
+              }
+
+              // Yield control briefly to keep UI responsive during heavy canvas operations
+              await new Promise((r) => setTimeout(r, 0));
+
+              if (quality > 0.3) {
+                quality -= 0.15;
+              } else {
+                // Scale down canvas if quality is already low
+                const newCanvas = document.createElement('canvas');
+                const newCtx = newCanvas.getContext('2d');
+                newCanvas.width = Math.max(1, Math.round(currentCanvas.width * 0.7));
+                newCanvas.height = Math.max(1, Math.round(currentCanvas.height * 0.7));
+                newCtx.drawImage(currentCanvas, 0, 0, newCanvas.width, newCanvas.height);
+                currentCanvas = newCanvas;
+                quality = 0.8; // reset quality for resized canvas
+              }
+            }
+            return null;
+          };
+
+          const blob = await compressToBlob(canvas);
           if (!blob) {
             throw new Error('Canvas conversion returned null blob.');
           }
@@ -6102,12 +6122,13 @@ const ScrapApp = {
           if (isNaN(newY)) newY = 2400;
 
           const timestamp = Date.now();
-          const elementId = 'photo_' + timestamp;
+          const uniqueSuffix = Math.random().toString(36).substring(2, 7);
+          const elementId = 'photo_' + timestamp + '_' + uniqueSuffix;
           const username = (window.pb && pb.authStore.isValid && pb.authStore.model)
             ? (pb.authStore.model.username || pb.authStore.model.name || pb.authStore.model.id)
             : (window.ScrapFirebase && window.ScrapFirebase.userName) || 'squadmate';
           const safeUsername = username.toLowerCase().replace(/[^a-z0-9_.]/g, '');
-          const fileName = `${safeUsername}_photo_${timestamp}.enc`;
+          const fileName = `${safeUsername}_photo_${timestamp}_${uniqueSuffix}.enc`;
 
           // 1. Write binary buffer to native disk cache first (awaited so local read hits immediately)
           await ScrapDrive.writeLocalCacheFile(fileName, encryptedBuffer);
@@ -6153,11 +6174,7 @@ const ScrapApp = {
               currentEl.fileId = uploadResult.id;
               delete currentEl._pendingFileName;
               delete currentEl._isPendingSync;
-              ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
-              if (ScrapFirebase.onElementsUpdateCallback) {
-                ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
-              }
-              ScrapFirebase.debounceSync();
+              await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
             }
           }
 
@@ -6171,29 +6188,22 @@ const ScrapApp = {
           // Hide progress spinner toast
           const progressToast = document.getElementById('upload-progress-notification');
           if (progressToast) progressToast.classList.add('hidden');
+          resolve();
         }
-      } catch (err) {
-        // Hide progress spinner toast
-        const progressToast = document.getElementById('upload-progress-notification');
-        if (progressToast) progressToast.classList.add('hidden');
-        if (err && err.message && (err.message.toLowerCase().includes('cancel') || err.message.toLowerCase().includes('abort'))) {
-          console.log('[Canvas Processing] User cancelled operation.');
-        } else {
-          console.warn('[Canvas Processing] Error:', err);
-        }
-      }
-    };
+      };
 
-    // Use FileReader to convert the File/Blob to a Data URL (avoids blob: URL CORS/security restrictions)
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      img.src = e.target.result;
-    };
-    reader.onerror = () => {
-      if (progressToast) progressToast.classList.add('hidden');
-      alert('Failed to read image file.');
-    };
-    reader.readAsDataURL(file);
+      // Use FileReader to convert the File/Blob to a Data URL (avoids blob: URL CORS/security restrictions)
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.src = e.target.result;
+      };
+      reader.onerror = () => {
+        if (progressToast) progressToast.classList.add('hidden');
+        alert('Failed to read image file.');
+        resolve();
+      };
+      reader.readAsDataURL(file);
+    });
   },
 
   async processVideoFile(file) {
@@ -7955,7 +7965,7 @@ const ScrapApp = {
         ScrapCanvas.reportPresence();
         ScrapCanvas.updateActiveMembersListUI();
       }
-    }, 4000);
+    }, 30000);
   },
 
   displayAlertToast(alert) {

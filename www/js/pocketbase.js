@@ -116,7 +116,7 @@ const ScrapFirebase = {
     }
 
     const existing = this.elements[elementId];
-    const isPendingMediaUpload = data._pendingFileName || (existing && existing._pendingFileName) || (data._isPendingSync && (!existing || existing._isPendingSync));
+    const isPendingMediaUpload = !!(data._pendingFileName || data._isPendingSync);
 
     const payload = {
       ...data,
@@ -131,6 +131,7 @@ const ScrapFirebase = {
       payload._isPendingSync = true;
     } else {
       delete payload._isPendingSync;
+      delete payload._pendingFileName;
     }
 
     this.elements[elementId] = payload;
@@ -244,9 +245,9 @@ const ScrapFirebase = {
       });
     }
 
-    // 2. Throttle backend presence updates to once every 5 seconds to optimize server load
+    // 2. Throttle backend presence updates to once every 25 seconds to optimize server load and save battery
     const now = Date.now();
-    if (!this.lastPresencePingTime || now - this.lastPresencePingTime > 5000) {
+    if (!this.lastPresencePingTime || now - this.lastPresencePingTime > 25000) {
       this.lastPresencePingTime = now;
       this.pingPresenceOnServer(roomId, x, y).catch(console.error);
     }
@@ -772,16 +773,13 @@ const ScrapFirebase = {
               changed = true;
             }
           }
-          // Strict User-Driven Deletion: NEVER delete an element from local or server UNLESS user explicitly deleted it
+          // Real-Time Remote Deletion Sync: If element is missing from server and not currently pending upload, delete locally
           for (const id of Object.keys(this.elements)) {
             if (!serverElements[id]) {
-              const wasExplicitlyDeleted = this.deletedElementIds && this.deletedElementIds[id];
-              if (wasExplicitlyDeleted) {
+              const localEl = this.elements[id];
+              const isLocalPendingUpload = localEl && (localEl._isPendingSync || localEl._pendingFileName);
+              if (!isLocalPendingUpload) {
                 delete this.elements[id];
-                changed = true;
-              } else {
-                // Keep local element and retain it so server never loses data
-                serverElements[id] = this.elements[id];
                 changed = true;
               }
             }

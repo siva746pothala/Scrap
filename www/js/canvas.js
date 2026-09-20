@@ -2509,6 +2509,10 @@ const ScrapCanvas = {
           throw new Error('Could not decrypt or decode image buffer.');
         }
 
+        if (this._retryCounts) {
+          delete this._retryCounts[id];
+        }
+
         if (this.elements && this.elements[id]) {
           this.elements[id]._decryptedDataUrl = url;
         }
@@ -2535,9 +2539,21 @@ const ScrapCanvas = {
         } else if (elData._isPendingSync) {
           // Photo is currently uploading in background — keep pending upload indicator
           if (loader) loader.innerText = 'Uploading... ⏳';
-        } else if (loader) {
-          loader.innerText = '⚠️ Decrypt Error';
-          loader.className = 'text-xs text-alert-pink';
+        } else {
+          // Slow mobile network or R2 propagation retry logic
+          if (!this._retryCounts) this._retryCounts = {};
+          const retries = this._retryCounts[id] || 0;
+          if (retries < 5) {
+            this._retryCounts[id] = retries + 1;
+            if (loader) loader.innerText = 'Uploading... ⏳';
+            setTimeout(() => {
+              this.decryptAndDisplayImage(id, encryptedDataOrFileId, container);
+            }, 2500);
+          } else if (loader) {
+            delete this._retryCounts[id];
+            loader.innerText = '⚠️ Decrypt Error';
+            loader.className = 'text-xs text-alert-pink';
+          }
         }
       }
     }).catch(err => {
@@ -2648,6 +2664,9 @@ const ScrapCanvas = {
         this.stopDoodleSparkleLoop(id);
         return;
       }
+      // Cap active sparkles per doodle element to max 2 to save GPU/CPU rendering cycles
+      if (domEl.querySelectorAll('.doodle-sparkle').length >= 2) return;
+
       const canvas = domEl.querySelector('canvas');
       if (!canvas) return;
 
@@ -2671,7 +2690,7 @@ const ScrapCanvas = {
       setTimeout(() => {
         sparkle.remove();
       }, 500);
-    }, 400); // Emits a sparkle every 400ms
+    }, 2500); // Emits a sparkle every 2.5s for battery efficiency
   },
 
   stopDoodleSparkleLoop(id) {
