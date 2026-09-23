@@ -1507,6 +1507,10 @@ const ScrapCanvas = {
           if (data.filterStyle) {
             img.classList.add(`filter-${data.filterStyle}`);
           }
+          // If image hasn't loaded or decrypted yet, re-trigger decryption upon sync update
+          if (img.classList.contains('hidden') || !img.src || img.src.length < 50) {
+            this.decryptAndDisplayImage(id, data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl, contentContainer);
+          }
         }
       }
 
@@ -2063,7 +2067,13 @@ const ScrapCanvas = {
               }
             } catch (err) {
               if (playLabel) playLabel.textContent = '▶';
-              await window.ScrapDialog.alert('Could not play voice note: ' + err.message);
+              console.warn('[Audio] Download/Play error:', err);
+              const isSyncing = err && err.message && (err.message.includes('404') || err.message.toLowerCase().includes('download') || err.message.toLowerCase().includes('not found') || err.message.toLowerCase().includes('fetch'));
+              if (isSyncing) {
+                await window.ScrapDialog.alert('Audio is still syncing to the cloud. Please tap Play again in a few seconds! ⏳');
+              } else {
+                await window.ScrapDialog.alert('Could not play voice note: ' + err.message);
+              }
             }
           });
         }
@@ -2310,8 +2320,15 @@ const ScrapCanvas = {
             await video.play();
           } catch (err) {
             console.error('[Video] Download/Play error:', err);
-            if (statusText) statusText.textContent = '▶ Tap to Play';
-            window.ScrapDialog.alert('Could not play video: ' + err.message);
+            const isSyncing = err && err.message && (err.message.includes('404') || err.message.toLowerCase().includes('download') || err.message.toLowerCase().includes('not found') || err.message.toLowerCase().includes('fetch'));
+            if (statusText) {
+              statusText.textContent = isSyncing ? '🔄 Tap to Sync' : '▶ Tap to Play';
+            }
+            if (isSyncing) {
+              window.ScrapDialog.alert('Video is still syncing to the cloud. Please tap again in a few seconds once buffering finishes! ⏳');
+            } else {
+              window.ScrapDialog.alert('Could not play video: ' + err.message);
+            }
           }
         });
       }
@@ -2586,23 +2603,25 @@ const ScrapCanvas = {
           img.src = fallbackUrl;
           img.classList.remove('hidden');
           if (loader) loader.classList.add('hidden');
-        } else if (elData._isPendingSync) {
-          // Photo is currently uploading in background — keep pending upload indicator
-          if (loader) loader.innerText = 'Uploading... ⏳';
         } else {
-          // Slow mobile network or R2 propagation retry logic
+          // Slow mobile network or R2 propagation retry logic (Up to 25 retries ~60 seconds)
           if (!this._retryCounts) this._retryCounts = {};
           const retries = this._retryCounts[id] || 0;
-          if (retries < 5) {
+          if (retries < 25) {
             this._retryCounts[id] = retries + 1;
-            if (loader) loader.innerText = 'Uploading... ⏳';
+            if (loader) loader.innerText = 'Syncing... ⏳';
             setTimeout(() => {
               this.decryptAndDisplayImage(id, encryptedDataOrFileId, container);
             }, 2500);
           } else if (loader) {
             delete this._retryCounts[id];
-            loader.innerText = '⚠️ Decrypt Error';
-            loader.className = 'text-xs text-alert-pink';
+            loader.innerHTML = '<span class="cursor-pointer underline">⚠️ Tap to sync 🔄</span>';
+            loader.className = 'text-[9px] font-mono text-amber-400 font-bold z-30 cursor-pointer select-none';
+            loader.onclick = (evt) => {
+              evt.stopPropagation();
+              loader.innerText = 'Syncing... ⏳';
+              this.decryptAndDisplayImage(id, encryptedDataOrFileId, container);
+            };
           }
         }
       }

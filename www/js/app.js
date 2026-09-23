@@ -1608,6 +1608,14 @@ const ScrapApp = {
     }
     sessionStorage.setItem('scrap_pin_session', '000000');
 
+    // Automatically backup existing room keys vault to server for user email
+    if (user.email && window.ScrapRecovery) {
+      const { vault: curVault, salt: curSalt } = this.getUserVaultAndSalt(userId);
+      if (curVault && curSalt) {
+        window.ScrapRecovery.syncVaultToServer(curVault, curSalt).catch(() => {});
+      }
+    }
+
     if (user.encrypted_avatar) {
       try {
         const decAvatar = await this.resolveUserAvatarUrl(user);
@@ -8375,6 +8383,138 @@ const ScrapApp = {
     panel.addEventListener('touchstart', touchStart, { passive: true });
     panel.addEventListener('touchmove', touchMove, { passive: true });
     panel.addEventListener('touchend', touchEnd, { passive: true });
+  },
+
+  async showOtpVerificationModal(email, onVerifiedCallback = null) {
+    const existingModal = document.getElementById('scrap-otp-modal');
+    if (existingModal) existingModal.remove();
+
+    const targetEmail = email || (window.pb && pb.authStore && pb.authStore.model && pb.authStore.model.email) || '';
+    if (!targetEmail) {
+      window.ScrapDialog.alert('Email address required to request OTP recovery code.');
+      return;
+    }
+
+    let otpId = '';
+    try {
+      const res = await window.ScrapRecovery.requestOtpKeyRecovery(targetEmail);
+      otpId = res.otpId || '';
+    } catch (e) {
+      window.ScrapDialog.alert('Could not send OTP email: ' + e.message);
+      return;
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'scrap-otp-modal';
+    modal.className = 'fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fade-in select-none';
+    modal.innerHTML = `
+      <div class="relative w-full max-w-sm rounded-3xl p-6 bg-gradient-to-b from-[#1c152d]/95 via-[#120d20]/95 to-[#090611]/98 border border-amber-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_30px_rgba(245,158,11,0.25)] flex flex-col items-center gap-5 text-white">
+        <!-- Close Button -->
+        <button id="otp-modal-close" class="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 transition-colors">✕</button>
+
+        <div class="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-2xl shadow-[0_0_20px_rgba(245,158,11,0.3)]">
+          🔐
+        </div>
+
+        <div class="text-center">
+          <h3 class="text-lg font-extrabold text-amber-300 tracking-wide font-mono">RESTORE VAULT KEYS</h3>
+          <p class="text-[11px] text-gray-300 mt-1">Enter 6-digit OTP code sent to:</p>
+          <p class="text-[12px] font-mono font-bold text-amber-400 truncate max-w-[260px] mx-auto mt-0.5">\${targetEmail}</p>
+        </div>
+
+        <!-- 6-Digit Code Inputs -->
+        <div class="flex items-center gap-2 my-1">
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="0" autofocus />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="1" />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="2" />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="3" />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="4" />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="5" />
+        </div>
+
+        <div id="otp-error-label" class="text-[11px] font-mono text-rose-400 text-center hidden font-bold"></div>
+
+        <!-- Verify Button -->
+        <button id="otp-verify-btn" class="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-black font-extrabold font-mono text-xs tracking-wider uppercase shadow-[0_0_20px_rgba(245,158,11,0.4)] active:scale-95 transition-all">
+          VERIFY & UNLOCK VAULT 🔑
+        </button>
+
+        <!-- Resend Timer -->
+        <div class="text-[10px] font-mono text-gray-400 text-center">
+          Didn't receive code? <span id="otp-resend-btn" class="text-amber-400 font-bold cursor-pointer underline">Resend Email</span>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const inputs = modal.querySelectorAll('.otp-input');
+    inputs.forEach((input, index) => {
+      input.addEventListener('input', (e) => {
+        if (e.target.value.length === 1 && index < inputs.length - 1) {
+          inputs[index + 1].focus();
+        }
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !e.target.value && index > 0) {
+          inputs[index - 1].focus();
+        }
+      });
+    });
+
+    modal.querySelector('#otp-modal-close').onclick = () => modal.remove();
+
+    const verifyBtn = modal.querySelector('#otp-verify-btn');
+    const errLabel = modal.querySelector('#otp-error-label');
+
+    verifyBtn.onclick = async () => {
+      let code = '';
+      inputs.forEach(i => code += i.value.trim());
+      if (code.length < 6) {
+        errLabel.textContent = 'Please enter all 6 digits.';
+        errLabel.classList.remove('hidden');
+        return;
+      }
+
+      errLabel.classList.add('hidden');
+      verifyBtn.innerText = 'VERIFYING... ⏳';
+      verifyBtn.disabled = true;
+
+      try {
+        const restored = await window.ScrapRecovery.verifyOtpAndRestoreVault(targetEmail, code, otpId);
+        if (restored) {
+          modal.remove();
+          await window.ScrapDialog.alert('🎉 Vault Keys Restored Successfully! Your photos and memories are unlocked.');
+          if (typeof onVerifiedCallback === 'function') {
+            onVerifiedCallback();
+          } else {
+            window.location.reload();
+          }
+        } else {
+          throw new Error('Could not unlock key vault.');
+        }
+      } catch (err) {
+        verifyBtn.innerText = 'VERIFY & UNLOCK VAULT 🔑';
+        verifyBtn.disabled = false;
+        errLabel.textContent = err.message || 'Invalid OTP verification.';
+        errLabel.classList.remove('hidden');
+      }
+    };
+
+    modal.querySelector('#otp-resend-btn').onclick = async () => {
+      const resendBtn = modal.querySelector('#otp-resend-btn');
+      resendBtn.innerText = 'Sending...';
+      try {
+        const res = await window.ScrapRecovery.requestOtpKeyRecovery(targetEmail);
+        otpId = res.otpId || '';
+        resendBtn.innerText = 'Sent! Check inbox';
+        setTimeout(() => resendBtn.innerText = 'Resend Email', 10000);
+      } catch (err) {
+        resendBtn.innerText = 'Resend Failed';
+        errLabel.textContent = err.message || 'Could not resend email.';
+        errLabel.classList.remove('hidden');
+      }
+    };
   }
 };
 

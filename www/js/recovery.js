@@ -103,10 +103,89 @@ const ScrapRecovery = {
     localStorage.setItem(`scrap_local_vault_${userId}`, encryptedVaultBase64);
     localStorage.setItem(`scrap_local_salt_${userId}`, saltBase64);
 
-    // In a live system, we also upload this string to the hidden App Folder in Drive:
-    // await ScrapDrive.uploadFile('key_vault.json', encryptedBuffer, 'root_app_folder');
+    // Sync master vault package to PocketBase under user email (non-blocking)
+    this.syncVaultToServer(encryptedVaultBase64, saltBase64).catch(err => {
+      console.warn('[ScrapRecovery] Cloud vault sync warning:', err);
+    });
     
     return { encryptedVaultBase64, saltBase64 };
+  },
+
+  async syncVaultToServer(vaultBase64 = null, saltBase64 = null) {
+    try {
+      const email = (window.pb && pb.authStore && pb.authStore.isValid && pb.authStore.model && pb.authStore.model.email) || null;
+      if (!email) return false;
+
+      const userId = (typeof ScrapFirebase !== 'undefined' && ScrapFirebase.userId) || localStorage.getItem('scrap_user_id') || 'default';
+      const vault = vaultBase64 || localStorage.getItem(`scrap_local_vault_${userId}`);
+      const salt = saltBase64 || localStorage.getItem(`scrap_local_salt_${userId}`);
+
+      if (!vault || !salt) return false;
+
+      const pbUrl = (window.pb && pb.baseUrl) || 'https://api.myscrapmemories.com';
+      const res = await fetch(`${pbUrl}/api/sync-user-vault`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), vault: vault, salt: salt })
+      });
+      const data = await res.json();
+      return data && data.success;
+    } catch (e) {
+      console.warn('[ScrapRecovery] syncVaultToServer error:', e);
+      return false;
+    }
+  },
+
+  async requestOtpKeyRecovery(email) {
+    try {
+      const pbUrl = (window.pb && pb.baseUrl) || 'https://api.myscrapmemories.com';
+      const res = await fetch(`${pbUrl}/api/request-vault-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: (email || '').trim().toLowerCase() })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to request OTP');
+      }
+      return data; // { success: true, otpId: '...' }
+    } catch (e) {
+      console.error('[ScrapRecovery] requestOtpKeyRecovery error:', e);
+      throw e;
+    }
+  },
+
+  async verifyOtpAndRestoreVault(email, otpCode, otpId = '') {
+    try {
+      const pbUrl = (window.pb && pb.baseUrl) || 'https://api.myscrapmemories.com';
+      const res = await fetch(`${pbUrl}/api/verify-vault-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: (email || '').trim().toLowerCase(),
+          otpCode: (otpCode || '').trim(),
+          otpId: otpId
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Invalid OTP verification');
+      }
+
+      // Unlock vault payload using session PIN
+      const pin = sessionStorage.getItem('scrap_pin_session') || '000000';
+      const restored = await this.unlockIdentity(pin, data.vault, data.salt);
+      if (restored) {
+        // Save to local storage for quick offline access
+        const userId = (typeof ScrapFirebase !== 'undefined' && ScrapFirebase.userId) || localStorage.getItem('scrap_user_id') || 'default';
+        localStorage.setItem(`scrap_local_vault_${userId}`, data.vault);
+        localStorage.setItem(`scrap_local_salt_${userId}`, data.salt);
+      }
+      return restored;
+    } catch (e) {
+      console.error('[ScrapRecovery] verifyOtpAndRestoreVault error:', e);
+      throw e;
+    }
   },
 
   // Save key for a group room
