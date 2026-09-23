@@ -1639,7 +1639,8 @@
 
   <!-- Uploading Spinner/Toast notification -->
   <div id="upload-progress-notification"
-    class="hidden fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4">
+    class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4 transition-all duration-300"
+    style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.85);">
     <div
       class="bg-[#120921] border border-[#39ff14]/40 rounded-2xl px-6 py-5 flex flex-col items-center gap-4 shadow-2xl min-w-[200px]">
       <div class="relative w-12 h-12 flex items-center justify-center">
@@ -1669,7 +1670,8 @@
   </div>
 
   <div id="voice-recording-overlay"
-    class="hidden fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-5">
+    class="hidden fixed inset-0 z-[100] flex items-center justify-center p-5 transition-all duration-300"
+    style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.85);">
     <div
       class="glass-panel w-full max-w-sm rounded-3xl border border-white/10 p-6 shadow-2xl flex flex-col items-center gap-4 text-center">
       <div class="relative w-12 h-12 flex items-center justify-center">
@@ -1723,7 +1725,8 @@
 
   <!-- Video Recording Modal Overlay -->
   <div id="video-recording-overlay"
-    class="hidden fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-5">
+    class="hidden fixed inset-0 z-[100] flex items-center justify-center p-5 transition-all duration-300"
+    style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.85);">
     <div
       class="glass-panel w-full max-w-sm rounded-3xl border border-white/10 p-6 shadow-2xl flex flex-col items-center gap-4 text-center">
       <h3 class="text-xs font-space font-bold text-[#00ffcc] uppercase tracking-widest">RECORD VIDEO NOTE</h3>
@@ -1766,7 +1769,8 @@
 
   <!-- Avatar Cropping Modal Overlay -->
   <div id="modal-avatar-cropper"
-    class="hidden fixed inset-0 z-[2000] bg-black/95 flex flex-col items-center justify-between p-6">
+    class="hidden fixed inset-0 z-[2000] flex flex-col items-center justify-between p-6 transition-all duration-300"
+    style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.85);">
     <div class="w-full max-w-sm flex flex-col items-center gap-4 text-center my-auto">
       <h3
         class="text-xs font-space font-bold text-[#b026ff] uppercase tracking-widest filter drop-shadow-[0_0_8px_rgba(176,38,255,0.4)]">
@@ -1820,6 +1824,53 @@
         <button id="btn-cropper-save" class="btn-capsule py-2.5 px-4 flex-1 font-space uppercase text-xs"
           style="background-color: #39ff14 !important; color: #000000 !important; border: none !important; font-weight: bold !important;">
           Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==============================================
+       POLAROID PHOTO FRAMING ADJUSTER MODAL
+       ============================================== -->
+  <div id="polaroid-cropper-overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center p-4 hidden transition-all duration-300" style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.82);">
+    <div class="w-full max-w-sm flex flex-col items-center gap-4 bg-[#120822] rounded-2xl p-5 shadow-2xl relative">
+
+      <!-- Live Interactive Polaroid Card Preview -->
+      <div class="polaroid-wrapper w-56 p-3 rounded-xl bg-white shadow-2xl relative text-black select-none pointer-events-auto">
+        <!-- Viewport Window (Cropping Frame) -->
+        <div id="polaroid-cropper-viewport" class="relative w-full h-48 bg-black overflow-hidden rounded touch-none flex items-center justify-center cursor-move">
+          <img id="polaroid-cropper-img" class="absolute max-w-none select-none pointer-events-none transition-transform duration-75" alt="Polaroid Adjust" />
+          <span class="absolute bottom-1 right-2 text-[9px] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono pointer-events-none">Drag photo 🖐️</span>
+        </div>
+
+        <!-- Polaroid Footer Space -->
+        <div class="h-6 flex items-center justify-center mt-2.5 px-1 font-space text-[9px] tracking-wider uppercase font-bold text-gray-700 border-t border-dashed border-gray-300 pt-1">
+          <span>SQUAD MOMENT</span>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="w-full flex flex-col gap-2.5 px-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-space text-gray-400 uppercase font-bold">Zoom</span>
+          <input type="range" id="polaroid-cropper-zoom" min="1" max="3" step="0.05" value="1"
+            class="w-3/4 accent-[#39ff14] h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer">
+        </div>
+        <div class="flex justify-between text-[9px] text-gray-500 font-mono px-1">
+          <span>Fit Frame</span>
+          <span>Zoom In</span>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex gap-3 w-full mt-2">
+        <button id="btn-polaroid-cropper-cancel"
+          class="btn-capsule btn-outline-capsule py-2 px-4 flex-1 font-space uppercase text-xs">
+          Cancel
+        </button>
+        <button id="btn-polaroid-cropper-save" class="btn-capsule py-2 px-4 flex-1 font-space uppercase text-xs"
+          style="background-color: #39ff14 !important; color: #000000 !important; border: none !important; font-weight: bold !important;">
+          Upload
         </button>
       </div>
     </div>

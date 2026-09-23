@@ -5,13 +5,34 @@
  */
 
 window.ScrapDialog = {
+  sanitizeErrorMessage(msg) {
+    if (!msg) return 'An unexpected error occurred. Please try again.';
+    const str = String(msg);
+
+    if (str.includes('github.com/pocketbase') || str.includes('ClientResponseError') || str.includes('Failed to fetch') || str.includes('NetworkError')) {
+      return '📡 Connection interrupted. Please check your internet connection and try again.';
+    }
+    if (str.includes('400') && str.includes('Something went wrong')) {
+      return '📡 Connection interrupted. Please check your internet connection and try again.';
+    }
+    if (str.includes('404') && (str.includes('not_found') || str.includes('ClientResponseError'))) {
+      return '⚠️ Item or room could not be found. It may have been updated or removed.';
+    }
+    if (str.includes('403') || str.includes('forbidden') || str.includes('unauthorized')) {
+      return '🔒 Session expired or unauthorized. Please re-enter the room.';
+    }
+
+    return str;
+  },
+
   alert(message) {
+    const cleanMessage = this.sanitizeErrorMessage(message);
     return new Promise((resolve) => {
       const modal = document.createElement('div');
       modal.style.cssText = 'position: fixed; inset: 0; z-index: 999999 !important; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); padding: 16px;';
       modal.innerHTML = `
         <div style="background:#120921; border:1px solid rgba(57,255,20,0.3); border-radius:24px; padding:24px; width:100%; max-width:360px; text-center; box-shadow:0 20px 40px rgba(0,0,0,0.8);" class="animate-in fade-in zoom-in-95 duration-200">
-          <p style="color:#fff; font-family:monospace; font-size:13px; line-height:1.6; margin-bottom:24px; text-transform:uppercase; letter-spacing:1px;">${message}</p>
+          <p style="color:#fff; font-family:monospace; font-size:13px; line-height:1.6; margin-bottom:24px; text-transform:uppercase; letter-spacing:1px;">${cleanMessage}</p>
           <button style="background:#39ff14; color:#000; font-family:monospace; font-weight:bold; font-size:11px; padding:10px 24px; border:none; border-radius:99px; text-transform:uppercase; letter-spacing:2px; cursor:pointer; transition:transform 0.1s;" class="hover:scale-105 active:scale-95">OK</button>
         </div>
       `;

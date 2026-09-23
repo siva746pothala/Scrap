@@ -1538,6 +1538,8 @@ const ScrapFirebase = {
             const uploadRes = await ScrapDrive.uploadFile(el._pendingFileName, fileBuffer, this.roomId);
             if (uploadRes && uploadRes.id) {
               el.fileId = uploadRes.id;
+              if (el.type === 'voice' || el.type === 'music') el.audioFileId = uploadRes.id;
+              if (el.type === 'video') el.videoFileId = uploadRes.id;
               delete el._pendingFileName;
               delete el._isPendingSync;
               updatedMedia = true;

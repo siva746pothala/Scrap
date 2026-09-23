@@ -4177,27 +4177,24 @@ const ScrapApp = {
               progressToast.classList.add('hidden');
             }
 
-            // 2. Stream to Cloudflare R2 silently in background without screen-blocking toasts
-            const uploadResult = await ScrapDrive.uploadFile(
-              fileName,
-              encBuf,
-              roomFolderId,
-              mimeType
-            );
-
-            if (uploadResult && uploadResult.id) {
-              const currentEl = ScrapFirebase.elements[elementId];
-              if (currentEl) {
-                currentEl.audioFileId = uploadResult.id;
-                delete currentEl._pendingFileName;
-                delete currentEl._isPendingSync;
-                ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
-                if (ScrapFirebase.onElementsUpdateCallback) {
-                  ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+            // 2. Stream to Cloudflare R2 asynchronously in background (Non-blocking)
+            ScrapDrive.uploadFile(fileName, encBuf, roomFolderId, mimeType)
+              .then(uploadResult => {
+                if (uploadResult && uploadResult.id) {
+                  const currentEl = ScrapFirebase.elements[elementId];
+                  if (currentEl) {
+                    currentEl.audioFileId = uploadResult.id;
+                    delete currentEl._pendingFileName;
+                    delete currentEl._isPendingSync;
+                    ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+                    if (ScrapFirebase.onElementsUpdateCallback) {
+                      ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+                    }
+                    ScrapFirebase.debounceSync();
+                  }
                 }
-                ScrapFirebase.debounceSync();
-              }
-            }
+              })
+              .catch(e => console.warn('[Drive Sync] Background audio upload error:', e));
           } catch (e) {
             console.error('[Drive Sync] Failed to upload audio recording:', e);
             alert('Failed to save voice note: ' + e.message);
@@ -5952,8 +5949,173 @@ const ScrapApp = {
     }
   },
 
+  showPolaroidFramingModal(file) {
+    return new Promise((resolve) => {
+      const modal = document.getElementById('polaroid-cropper-overlay');
+      const imgEl = document.getElementById('polaroid-cropper-img');
+      const viewport = document.getElementById('polaroid-cropper-viewport');
+      const zoomInput = document.getElementById('polaroid-cropper-zoom');
+      const btnSave = document.getElementById('btn-polaroid-cropper-save');
+      const btnCancel = document.getElementById('btn-polaroid-cropper-cancel');
+      const btnClose = document.getElementById('btn-polaroid-cropper-close');
+
+      if (!modal || !imgEl || !viewport) {
+        resolve(file);
+        return;
+      }
+
+      let posX = 0;
+      let posY = 0;
+      let scale = 1;
+      let isDragging = false;
+      let startX = 0;
+      let startY = 0;
+
+      const fileUrl = URL.createObjectURL(file);
+      imgEl.src = fileUrl;
+
+      const resetTransform = () => {
+        posX = 0;
+        posY = 0;
+        scale = 1;
+        if (zoomInput) zoomInput.value = 1;
+        updateTransform();
+      };
+
+      const updateTransform = () => {
+        imgEl.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
+      };
+
+      imgEl.onload = () => {
+        modal.classList.remove('hidden');
+        resetTransform();
+        const vpW = viewport.clientWidth || 224;
+        const vpH = viewport.clientHeight || 192;
+        const imgRatio = imgEl.naturalWidth / imgEl.naturalHeight;
+        const vpRatio = vpW / vpH;
+
+        if (imgRatio < vpRatio) {
+          imgEl.style.width = `${vpW}px`;
+          imgEl.style.height = 'auto';
+        } else {
+          imgEl.style.height = `${vpH}px`;
+          imgEl.style.width = 'auto';
+        }
+      };
+
+      const onPointerDown = (e) => {
+        isDragging = true;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        startX = clientX - posX;
+        startY = clientY - posY;
+      };
+
+      const onPointerMove = (e) => {
+        if (!isDragging) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        posX = clientX - startX;
+        posY = clientY - startY;
+        updateTransform();
+      };
+
+      const onPointerUp = () => {
+        isDragging = false;
+      };
+
+      viewport.addEventListener('mousedown', onPointerDown);
+      window.addEventListener('mousemove', onPointerMove);
+      window.addEventListener('mouseup', onPointerUp);
+
+      viewport.addEventListener('touchstart', onPointerDown, { passive: true });
+      window.addEventListener('touchmove', onPointerMove, { passive: true });
+      window.addEventListener('touchend', onPointerUp);
+
+      const onZoom = () => {
+        scale = parseFloat(zoomInput.value) || 1;
+        updateTransform();
+      };
+
+      if (zoomInput) zoomInput.addEventListener('input', onZoom);
+
+      const cleanup = () => {
+        modal.classList.add('hidden');
+        URL.revokeObjectURL(fileUrl);
+        viewport.removeEventListener('mousedown', onPointerDown);
+        window.removeEventListener('mousemove', onPointerMove);
+        window.removeEventListener('mouseup', onPointerUp);
+        viewport.removeEventListener('touchstart', onPointerDown);
+        window.removeEventListener('touchmove', onPointerMove);
+        window.removeEventListener('touchend', onPointerUp);
+        if (zoomInput) zoomInput.removeEventListener('input', onZoom);
+        btnSave.removeEventListener('click', onSave);
+        btnCancel.removeEventListener('click', onCancel);
+        if (btnClose) btnClose.removeEventListener('click', onCancel);
+      };
+
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const onSave = async () => {
+        try {
+          const cropCanvas = document.createElement('canvas');
+          const vpW = viewport.clientWidth || 224;
+          const vpH = viewport.clientHeight || 192;
+          cropCanvas.width = 1200;
+          cropCanvas.height = Math.round(1200 * (vpH / vpW));
+          const ctx = cropCanvas.getContext('2d');
+
+          const imgRect = imgEl.getBoundingClientRect();
+          const vpRect = viewport.getBoundingClientRect();
+
+          const scaleX = imgEl.naturalWidth / imgRect.width;
+          const scaleY = imgEl.naturalHeight / imgRect.height;
+
+          const srcX = (vpRect.left - imgRect.left) * scaleX;
+          const srcY = (vpRect.top - imgRect.top) * scaleY;
+          const srcW = vpRect.width * scaleX;
+          const srcH = vpRect.height * scaleY;
+
+          ctx.drawImage(
+            imgEl,
+            srcX, srcY, srcW, srcH,
+            0, 0, cropCanvas.width, cropCanvas.height
+          );
+
+          cropCanvas.toBlob((blob) => {
+            cleanup();
+            if (blob) {
+              const framedFile = new File([blob], file.name || `polaroid_${Date.now()}.jpg`, { type: 'image/jpeg' });
+              resolve(framedFile);
+            } else {
+              resolve(file);
+            }
+          }, 'image/jpeg', 0.92);
+        } catch (err) {
+          console.warn('[PolaroidCropper] Crop error:', err);
+          cleanup();
+          resolve(file);
+        }
+      };
+
+      btnSave.addEventListener('click', onSave);
+      btnCancel.addEventListener('click', onCancel);
+      if (btnClose) btnClose.removeEventListener('click', onCancel);
+    });
+  },
+
   // Process captured image
   async processCapturedFile(file) {
+    if (!file) return;
+
+    // Show Polaroid Framing Adjuster Modal before upload/canvas placement
+    const framedFile = await this.showPolaroidFramingModal(file);
+    if (!framedFile) return;
+    file = framedFile;
+
     // Ensure progress spinner toast is hidden - uploads stream silently in background
     const progressToast = document.getElementById('upload-progress-notification');
     if (progressToast) progressToast.classList.add('hidden');
@@ -6159,24 +6321,21 @@ const ScrapApp = {
             setTimeout(() => ScrapCanvas.checkFirstPhotoTip(ScrapCanvas.elements), 150);
           }
 
-          // 3. Initiate background upload to Cloudflare R2 silently in background
-          const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
-          const uploadResult = await ScrapDrive.uploadFile(
-            fileName,
-            encryptedBuffer,
-            roomFolderId,
-            'application/octet-stream'
-          );
-
-          if (uploadResult && uploadResult.id) {
-            const currentEl = ScrapFirebase.elements[elementId];
-            if (currentEl) {
-              currentEl.fileId = uploadResult.id;
-              delete currentEl._pendingFileName;
-              delete currentEl._isPendingSync;
-              await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
-            }
-          }
+          // 3. Initiate background upload to Cloudflare R2 asynchronously (Non-blocking)
+          ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate)
+            .then(roomFolderId => ScrapDrive.uploadFile(fileName, encryptedBuffer, roomFolderId, 'application/octet-stream'))
+            .then(async uploadResult => {
+              if (uploadResult && uploadResult.id) {
+                const currentEl = ScrapFirebase.elements[elementId];
+                if (currentEl) {
+                  currentEl.fileId = uploadResult.id;
+                  delete currentEl._pendingFileName;
+                  delete currentEl._isPendingSync;
+                  await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
+                }
+              }
+            })
+            .catch(err => console.warn('[Upload] Background photo upload error:', err));
 
         } catch (err) {
           if (err && err.message && (err.message.toLowerCase().includes('cancel') || err.message.toLowerCase().includes('abort'))) {
@@ -6299,27 +6458,24 @@ const ScrapApp = {
 
       if (progressToast) progressToast.classList.add('hidden');
 
-      // 5. Stream video to Cloudflare R2 silently in background without blocking UI
-      const uploadResult = await ScrapDrive.uploadFile(
-        fileName,
-        encBuf,
-        roomFolderId,
-        mimeType
-      );
-
-      if (uploadResult && uploadResult.id) {
-        const currentEl = ScrapFirebase.elements[elementId];
-        if (currentEl) {
-          currentEl.videoFileId = uploadResult.id;
-          delete currentEl._pendingFileName;
-          delete currentEl._isPendingSync;
-          ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
-          if (ScrapFirebase.onElementsUpdateCallback) {
-            ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+      // 5. Stream video to Cloudflare R2 asynchronously in background (Non-blocking)
+      ScrapDrive.uploadFile(fileName, encBuf, roomFolderId, mimeType)
+        .then(uploadResult => {
+          if (uploadResult && uploadResult.id) {
+            const currentEl = ScrapFirebase.elements[elementId];
+            if (currentEl) {
+              currentEl.videoFileId = uploadResult.id;
+              delete currentEl._pendingFileName;
+              delete currentEl._isPendingSync;
+              ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+              if (ScrapFirebase.onElementsUpdateCallback) {
+                ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+              }
+              ScrapFirebase.debounceSync();
+            }
           }
-          ScrapFirebase.debounceSync();
-        }
-      }
+        })
+        .catch(err => console.warn('[Video] Background upload error:', err));
     } catch (err) {
       console.error('[Video] Capture/Upload failed:', err);
       await window.ScrapDialog.alert('Failed to save video sticker: ' + err.message);
@@ -6993,7 +7149,8 @@ const ScrapApp = {
   // Helper method to display WhatsApp-style image preview popup
   showAvatarPreview(title, url, colorHex, roomId, isOwner) {
     const overlay = document.createElement('div');
-    overlay.className = 'fixed inset-0 bg-black/75 backdrop-blur-md z-[110] flex items-center justify-center p-6 transition-all duration-300 pointer-events-auto opacity-0 select-none avatar-preview-overlay';
+    overlay.className = 'fixed inset-0 z-[110] flex items-center justify-center p-6 transition-all duration-300 pointer-events-auto opacity-0 select-none avatar-preview-overlay';
+    overlay.style.cssText = 'backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); background-color: rgba(10, 5, 20, 0.85);';
 
     const initials = title.substring(0, 2).toUpperCase();
 
@@ -7090,7 +7247,8 @@ const ScrapApp = {
   // Helper method to display user's own profile avatar preview card and upload replacements
   showUserAvatarPreview(title, url) {
     const overlay = document.createElement('div');
-    overlay.className = 'fixed inset-0 bg-black/75 backdrop-blur-md z-[110] flex items-center justify-center p-6 transition-all duration-300 pointer-events-auto opacity-0 select-none avatar-preview-overlay';
+    overlay.className = 'fixed inset-0 z-[110] flex items-center justify-center p-6 transition-all duration-300 pointer-events-auto opacity-0 select-none avatar-preview-overlay';
+    overlay.style.cssText = 'backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); background-color: rgba(10, 5, 20, 0.85);';
 
     const initials = title.substring(0, 2).toUpperCase();
 

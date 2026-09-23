@@ -1469,7 +1469,7 @@ const ScrapCanvas = {
             </div>
             <div class="relative w-full h-40 bg-black overflow-hidden flex items-center justify-center border border-gray-200" style="${borderCSS.photo || ''}">
               <span class="loading-label text-[10px] font-space text-purple-600 animate-pulse font-bold">Decrypting...</span>
-              <img class="w-full h-full object-cover hidden select-none ${filterClass}" alt="Photo" draggable="false" />
+              <img class="w-full h-full object-cover hidden select-none ${filterClass}" style="object-position: ${data.objectPosition || 'center 20%'}" alt="Photo" draggable="false" />
             </div>
             <!-- Polaroid space footer (user-editable) -->
             <div class="h-6 flex items-center justify-center mt-2 px-1 font-space text-[8px] tracking-wider uppercase font-bold select-none polaroid-footer-click border-t border-dashed pt-1 cursor-edit" style="${borderCSS.footer || 'color:#000;border-color:#ccc'}">
@@ -2138,7 +2138,7 @@ const ScrapCanvas = {
               <div class="absolute inset-0 pointer-events-none opacity-30 mix-blend-overlay" style="background: radial-gradient(circle, transparent 50%, rgba(0,0,0,0.8) 100%);"></div>
               
               <!-- Inline Video Player -->
-              <video class="w-full h-full object-cover hidden pointer-events-none" playsinline loop></video>
+              <video class="w-full h-full object-cover hidden pointer-events-none" playsinline></video>
               
               <!-- Video Poster / Play Button Overlay -->
               <div class="video-poster-overlay absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-black/80 via-black/40 to-transparent transition-colors duration-300">
@@ -2406,6 +2406,56 @@ const ScrapCanvas = {
       }
     };
     return styles[style] || styles.classic;
+  },
+
+  getCanvasFilterString(style) {
+    if (!style) return 'none';
+    const s = String(style).toLowerCase();
+    if (s.includes('gray') || s.includes('bw')) return 'grayscale(100%)';
+    if (s.includes('sepia') || s.includes('vintage')) return 'sepia(80%) contrast(110%)';
+    if (s.includes('warm')) return 'sepia(30%) saturate(140%) brightness(105%)';
+    if (s.includes('cold')) return 'hue-rotate(180deg) saturate(120%)';
+    if (s.includes('cyber')) return 'hue-rotate(270deg) contrast(140%) saturate(160%)';
+    if (s.includes('dramatic')) return 'contrast(160%) brightness(90%) saturate(130%)';
+    if (s.includes('retro')) return 'sepia(50%) contrast(120%) hue-rotate(-20deg)';
+    if (s.includes('invert')) return 'invert(100%)';
+    return 'none';
+  },
+
+  getPolaroidExportStyle(borderStyle) {
+    const b = String(borderStyle || 'classic').toLowerCase();
+    switch (b) {
+      case 'neon_pink':
+        return { bg: '#120920', border: '#ff00ab', text: '#ff00ab' };
+      case 'neon_green':
+        return { bg: '#071a0e', border: '#39ff14', text: '#39ff14' };
+      case 'retro_pink':
+        return { bg: '#ffb3d9', border: '#ff1493', text: '#8b0057' };
+      case 'dark_chrome':
+        return { bg: '#1c1c2e', border: '#888888', text: '#cccccc' };
+      case 'washi_tape':
+        return { bg: '#fffdf9', border: '#e7e3d4', text: '#5d5746' };
+      case 'cow_print':
+        return { bg: '#ffffff', border: '#222222', text: '#222222' };
+      case 'checkerboard':
+        return { bg: '#ff00ab', border: '#ff00ab', text: '#ff00ab' };
+      case 'holographic':
+        return { bg: '#ff0080', border: '#ffffff', text: '#ffffff' };
+      case 'aurora':
+        return { bg: '#00ff87', border: '#00ff87', text: '#00ff87' };
+      case 'galaxy':
+        return { bg: '#0f0c29', border: '#7b2ff7', text: '#cc99ff' };
+      case 'ocean':
+        return { bg: '#00b4db', border: '#00f2fe', text: '#00f2fe' };
+      case 'sunset':
+        return { bg: '#f7971e', border: '#ffd200', text: '#ffd200' };
+      case 'vaporwave':
+        return { bg: '#ff6ec7', border: '#ff6ec7', text: '#ff6ec7' };
+      case 'midnight_prism':
+        return { bg: '#1a0533', border: '#b464ff', text: '#cc88ff' };
+      default:
+        return { bg: '#ffffff', border: '#e2e8f0', text: '#120921' };
+    }
   },
 
   decryptQueue: null,
@@ -5895,7 +5945,8 @@ const ScrapCanvas = {
 
         // Draw Polaroid card background frame if it's a polaroid photo
         if (data.type === 'photo') {
-          ctx.fillStyle = '#ffffff';
+          const exportStyle = this.getPolaroidExportStyle(data.borderStyle);
+          ctx.fillStyle = exportStyle.bg;
           ctx.shadowColor = 'rgba(0,0,0,0.5)';
           ctx.shadowBlur = 12;
           ctx.shadowOffsetY = 6;
@@ -5903,6 +5954,15 @@ const ScrapCanvas = {
           if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 8); else ctx.rect(0, 0, elW, elH);
           ctx.fill();
           ctx.shadowBlur = 0;
+
+          // Draw custom frame border stroke
+          if (exportStyle.border) {
+            ctx.strokeStyle = exportStyle.border;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(0, 0, elW, elH, 8); else ctx.rect(0, 0, elW, elH);
+            ctx.stroke();
+          }
         }
 
         const innerPadding = data.type === 'photo' ? 8 : 0;
@@ -5919,7 +5979,48 @@ const ScrapCanvas = {
               const tempImg = new Image();
               tempImg.onload = () => {
                 try {
-                  ctx.drawImage(tempImg, innerPadding, innerPadding, elW - (innerPadding * 2), photoH);
+                  ctx.save();
+                  // Apply canvas filter (grayscale, sepia, warm, cyber, etc.) to exported PNG
+                  const filterStr = this.getCanvasFilterString(data.filterStyle);
+                  if (filterStr && filterStr !== 'none' && ctx.filter !== undefined) {
+                    ctx.filter = filterStr;
+                  }
+
+                  const drawW = elW - (innerPadding * 2);
+                  const drawH = photoH;
+
+                  // Perform object-fit: cover & object-position: center 20% source cropping
+                  const imgW = tempImg.naturalWidth || tempImg.width || drawW;
+                  const imgH = tempImg.naturalHeight || tempImg.height || drawH;
+
+                  const targetAspect = drawW / drawH;
+                  const imgAspect = imgW / imgH;
+
+                  let sWidth = imgW;
+                  let sHeight = imgH;
+                  let sx = 0;
+                  let sy = 0;
+
+                  if (imgAspect > targetAspect) {
+                    // Wide image: crop horizontal sides, center vertically
+                    sHeight = imgH;
+                    sWidth = imgH * targetAspect;
+                    sx = (imgW - sWidth) / 2;
+                    sy = 0;
+                  } else {
+                    // Tall portrait image: crop top/bottom, align to top 20% for faces
+                    sWidth = imgW;
+                    sHeight = imgW / targetAspect;
+                    sx = 0;
+                    sy = Math.max(0, Math.min(imgH - sHeight, (imgH - sHeight) * 0.20));
+                  }
+
+                  ctx.drawImage(
+                    tempImg,
+                    sx, sy, sWidth, sHeight,
+                    innerPadding, innerPadding, drawW, drawH
+                  );
+                  ctx.restore();
                 } catch (_) {}
                 resolve();
               };
@@ -5935,7 +6036,8 @@ const ScrapCanvas = {
 
         // Render Polaroid Footer Caption Text
         if (data.type === 'photo' && data.polaroidText) {
-          ctx.fillStyle = '#120921';
+          const exportStyle = this.getPolaroidExportStyle(data.borderStyle);
+          ctx.fillStyle = exportStyle.text;
           ctx.font = 'bold 11px monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
