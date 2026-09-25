@@ -289,10 +289,27 @@ const ScrapFirebase = {
     this.connections = {};
     this.localMediaFiles = {};
     this.mediaCacheRAM = {};
+    if (this.periodicSyncInterval) {
+      clearInterval(this.periodicSyncInterval);
+      this.periodicSyncInterval = null;
+    }
     try {
       window.pb.collection('boards').unsubscribe('*');
       window.pb.collection('presence').unsubscribe('*');
     } catch (e) { }
+  },
+
+  startPeriodicBoardSync() {
+    if (this.periodicSyncInterval) clearInterval(this.periodicSyncInterval);
+    this.periodicSyncInterval = setInterval(() => {
+      // Smart Fallback: Only poll if Realtime SSE is currently disconnected/reconnecting
+      const isRealtimeConnected = window.pb && pb.realtime && pb.realtime.isConnected;
+      if (this.roomId && window.pb && pb.authStore.isValid && !document.hidden && !this.isSyncingInProgress && !isRealtimeConnected) {
+        console.log('[PocketBase Sync] Realtime SSE inactive. Running safety fallback sync...');
+        const dateStr = (window.ScrapApp && window.ScrapApp.currentDate) || new Date().toISOString().split('T')[0];
+        this.loadBoardFromPocketBase(dateStr).catch(() => {});
+      }
+    }, 60000);
   },
 
   debounceSync() {
@@ -581,6 +598,18 @@ const ScrapFirebase = {
 
     const dateStr = window.ScrapApp.currentDate || new Date().toISOString().split('T')[0];
     this.loadBoardFromPocketBase(dateStr).catch(console.error);
+    this.startPeriodicBoardSync();
+
+    // Re-fetch latest board state whenever PocketBase Realtime connects or reconnects
+    if (window.pb && window.pb.realtime && typeof window.pb.realtime.subscribe === 'function') {
+      window.pb.realtime.subscribe('PB_CONNECT', () => {
+        if (this.roomId === roomId && this.roomSubscriptionToken === subscriptionToken) {
+          console.log('[PocketBase Realtime] PB_CONNECT event. Re-syncing board state...');
+          const currentBoardDate = (window.ScrapApp && window.ScrapApp.currentDate) || new Date().toISOString().split('T')[0];
+          this.loadBoardFromPocketBase(currentBoardDate).catch(console.error);
+        }
+      }).catch(() => {});
+    }
 
     // Setup PocketBase subscription for real-time sync
     try {
@@ -896,14 +925,15 @@ const ScrapFirebase = {
     }
   },
 
-  async prepareAccountDeletion(userId) {
-    console.log(`[PocketBase prepareAccountDeletion] Starting for user ${userId}. Auth valid: ${Boolean(window.pb && pb.authStore.isValid)}.`);
-    if (!window.pb || !pb.authStore.isValid || !userId) {
+  async prepareAccountDeletion(userId, client = window.pb) {
+    const pbInst = client || window.pb;
+    console.log(`[PocketBase prepareAccountDeletion] Starting for user ${userId}. Auth valid: ${Boolean(pbInst && pbInst.authStore && pbInst.authStore.isValid)}.`);
+    if (!pbInst || !pbInst.authStore || !pbInst.authStore.isValid || !userId) {
       throw new Error('Not authenticated.');
     }
 
-    const ownedBoards = await pb.collection('boards').getFullList({ filter: `user = "${userId}"` });
-    const memberBoards = await pb.collection('boards').getFullList({ filter: `members ~ "${userId}"` });
+    const ownedBoards = await pbInst.collection('boards').getFullList({ filter: `user = "${userId}"` });
+    const memberBoards = await pbInst.collection('boards').getFullList({ filter: `members ~ "${userId}"` });
     const boards = [...new Map([...ownedBoards, ...memberBoards].map(board => [board.id, board])).values()];
     console.log(`[PocketBase prepareAccountDeletion] Found ${boards.length} room(s) for user ${userId}.`);
     const deletedSoloRoomIds = [];
@@ -915,29 +945,29 @@ const ScrapFirebase = {
 
       if (isOwner && remainingMembers.length === 0) {
         console.log(`[PocketBase prepareAccountDeletion] Solo room ${board.id}: deleting room and media first.`);
-        await this.deleteRoom(board.id);
+        await this.deleteRoom(board.id, pbInst);
         deletedSoloRoomIds.push(board.id);
       } else if (isOwner) {
         console.log(`[PocketBase prepareAccountDeletion] Group owner room ${board.id}: transferring ownership.`);
         // Preserve a group space by transferring ownership to a remaining member.
-        await pb.collection('boards').update(board.id, {
+        await pbInst.collection('boards').update(board.id, {
           user: remainingMembers[0],
           members: remainingMembers
         });
       } else if (members.includes(userId)) {
         console.log(`[PocketBase prepareAccountDeletion] Group member room ${board.id}: removing membership.`);
-        await pb.collection('boards').update(board.id, {
+        await pbInst.collection('boards').update(board.id, {
           members: remainingMembers
         });
       }
     }
 
     try {
-      const presenceRecords = await pb.collection('presence').getFullList({
+      const presenceRecords = await pbInst.collection('presence').getFullList({
         filter: `user = "${userId}"`
       });
       for (const presence of presenceRecords) {
-        await pb.collection('presence').delete(presence.id);
+        await pbInst.collection('presence').delete(presence.id);
       }
     } catch (e) {
       console.warn('[PocketBase prepareAccountDeletion] Presence cleanup failed:', e);
@@ -998,14 +1028,15 @@ const ScrapFirebase = {
     }
   },
 
-  async deleteRoom(roomId) {
-    console.log(`[PocketBase deleteRoom] Requested for room ${roomId}. Auth valid: ${Boolean(window.pb && pb.authStore.isValid)}.`);
-    if (!window.pb || !pb.authStore.isValid) {
+  async deleteRoom(roomId, client = window.pb) {
+    const pbInst = client || window.pb;
+    console.log(`[PocketBase deleteRoom] Requested for room ${roomId}. Auth valid: ${Boolean(pbInst && pbInst.authStore && pbInst.authStore.isValid)}.`);
+    if (!pbInst || !pbInst.authStore || !pbInst.authStore.isValid) {
       throw new Error('Not authenticated.');
     }
     try {
       console.log(`[PocketBase deleteRoom] Deleting room ${roomId} and its media...`);
-      const board = await pb.collection('boards').getOne(roomId);
+      const board = await pbInst.collection('boards').getOne(roomId);
       
       // 1. Gather all files in the board state
       let elements = {};
@@ -1056,20 +1087,20 @@ const ScrapFirebase = {
       }
       for (const fileId of fileIdsToDelete) {
         try {
-          await window.ScrapDrive.deleteFile(fileId);
+          await window.ScrapDrive.deleteFile(fileId, pbInst);
           console.log(`[PocketBase deleteRoom] Deleted file: ${fileId}`);
         } catch (fileErr) {
-          throw new Error(`Failed to delete media file ${fileId}: ${fileErr.message}`);
+          console.warn(`[PocketBase deleteRoom] Could not delete media file ${fileId} from R2:`, fileErr.message);
         }
       }
 
       // 3. Delete presence records for this board
       try {
-        const presenceList = await pb.collection('presence').getFullList({
+        const presenceList = await pbInst.collection('presence').getFullList({
           filter: `board = "${roomId}"`
         });
         for (const p of presenceList) {
-          await pb.collection('presence').delete(p.id);
+          await pbInst.collection('presence').delete(p.id);
         }
         console.log(`[PocketBase deleteRoom] Deleted presence records.`);
       } catch (presenceErr) {
@@ -1077,7 +1108,7 @@ const ScrapFirebase = {
       }
 
       // 4. Finally, delete the board record itself
-      await pb.collection('boards').delete(roomId);
+      await pbInst.collection('boards').delete(roomId);
       console.log(`[PocketBase deleteRoom] Board record ${roomId} successfully deleted.`);
     } catch (e) {
       console.error('[PocketBase deleteRoom] Error:', e);
@@ -1566,9 +1597,15 @@ window.ScrapFirebase = ScrapFirebase;
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    console.log('[ScrapNetwork] Network connection restored! Flushing pending sync queue...');
-    if (window.ScrapFirebase && typeof window.ScrapFirebase.flushPendingSyncQueue === 'function') {
-      window.ScrapFirebase.flushPendingSyncQueue();
+    console.log('[ScrapNetwork] Network connection restored! Flushing pending sync queue & re-syncing board...');
+    if (window.ScrapFirebase) {
+      if (typeof window.ScrapFirebase.flushPendingSyncQueue === 'function') {
+        window.ScrapFirebase.flushPendingSyncQueue();
+      }
+      if (window.ScrapFirebase.roomId && typeof window.ScrapFirebase.loadBoardFromPocketBase === 'function') {
+        const dateStr = (window.ScrapApp && window.ScrapApp.currentDate) || new Date().toISOString().split('T')[0];
+        window.ScrapFirebase.loadBoardFromPocketBase(dateStr).catch(console.error);
+      }
     }
   });
 }

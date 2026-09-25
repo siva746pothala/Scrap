@@ -7,14 +7,8 @@ onRecordAfterUpdateRequest((e) => {
     const oldBoard = e.originalRecord;
     const boardTitle = board.get("title") || "Squad Space";
     const boardId = board.id;
-    
-    console.log("[Notifications] Board update detected for room:", boardId);
 
-    // Persistent deduplication map in Goja execution scope
-    if (typeof this.__notifiedMap === "undefined") {
-      this.__notifiedMap = {};
-    }
-    const notifiedMap = this.__notifiedMap;
+    console.log("[Notifications] Board update detected for room:", boardId);
 
     // 1. Parse board_state JSON column from PocketBase
     let newElements = {};
@@ -47,24 +41,54 @@ onRecordAfterUpdateRequest((e) => {
     } catch(err) {
       oldElements = {};
     }
+    // Find newly added elements.
+    // TWO conditions must BOTH be true to count as "new":
+    //  1. The key did not exist in the previous board_state snapshot
+    //  2. The element's createdAt timestamp is within the last 2 minutes
+    //
+    // Condition 2 is the critical safety net: originalRecord.board_state is
+    // often empty/null (PocketBase doesn't always populate JSON columns on it),
+    // which makes oldElements = {} and every canvas element look "added".
+    // A stale createdAt timestamp ensures old elements are always skipped.
+    const RECENTLY_ADDED_MS = 120000; // 2 minutes
+    const nowMs = Date.now();
 
     const newKeys = Object.keys(newElements);
-    const oldKeys = Object.keys(oldElements);
 
-    // Find the newly added element key(s)
+
     const addedKeys = newKeys.filter(function(k) {
-      return !oldElements[k];
+      if (oldElements[k]) return false; // existed in previous snapshot — not new
+      const el = newElements[k] || {};
+      const ts = el.createdAt || el.updatedAt || 0;
+      const isRecent = (nowMs - ts) < RECENTLY_ADDED_MS;
+      if (!isRecent) {
+        console.log("[Notifications] Skipping old element (stale timestamp):", k, "| age(s):", Math.round((nowMs - ts) / 1000));
+      }
+      return isRecent;
     });
 
     if (addedKeys.length === 0) {
-      console.log("[Notifications] No new element added key found. Skipping.");
+      console.log("[Notifications] No genuinely new element found. Skipping.");
       return;
     }
 
-    // DEDUPLICATION SHIELD: Filter out items that were already notified in the last 60 seconds
+
+    // DEDUPLICATION SHIELD: skip element IDs notified within the last 90 seconds.
+    // 90s covers the two-phase photo save: initial metadata write + post-R2-upload fileId patch.
+    // Uses $app.store() — PocketBase's built-in process-lifetime KV cache — because
+    // module-level variables are NOT shared across Goja hook invocations.
+    const DEDUP_KEY = "notif_dedup_map";
+    const DEDUP_TTL = 90000;  // 90 seconds
+    const CLEANUP_TTL = 600000; // 10 minutes
+
+    let notifiedMap = $app.store().get(DEDUP_KEY);
+    if (!notifiedMap || typeof notifiedMap !== "object") {
+      notifiedMap = {};
+    }
+
     const unnotifiedKeys = addedKeys.filter(function(k) {
-      const lastTime = notifiedMap[k] || 0;
-      return (Date.now() - lastTime) > 60000;
+      const lastTime = notifiedMap[boardId + ":" + k] || 0;
+      return (Date.now() - lastTime) > DEDUP_TTL;
     });
 
     if (unnotifiedKeys.length === 0) {
@@ -73,17 +97,21 @@ onRecordAfterUpdateRequest((e) => {
     }
 
     // Mark these element IDs as notified now
+    const notifyTs = Date.now();
     unnotifiedKeys.forEach(function(k) {
-      notifiedMap[k] = Date.now();
+      notifiedMap[boardId + ":" + k] = notifyTs;
     });
 
-    // Cleanup old items from deduplication cache older than 10 minutes
+    // Cleanup entries older than 10 minutes to prevent unbounded growth
     const now = Date.now();
     Object.keys(notifiedMap).forEach(function(k) {
-      if (now - notifiedMap[k] > 600000) {
+      if (now - notifiedMap[k] > CLEANUP_TTL) {
         delete notifiedMap[k];
       }
     });
+
+    // Persist the updated map back to the store
+    $app.store().set(DEDUP_KEY, notifiedMap);
 
     // Determine the type of the newly added item
     const lastAddedKey = unnotifiedKeys[unnotifiedKeys.length - 1];
@@ -92,11 +120,20 @@ onRecordAfterUpdateRequest((e) => {
 
     console.log("[Notifications] Newly added item key:", lastAddedKey, "| Type:", itemType);
 
-    // 2. Identify active user
-    const activeUser = e.auth; 
-    const activeUserName = activeUser ? (activeUser.get("name") || activeUser.get("username") || "Squadmate") : "Squadmate";
-    const activeUserId = activeUser ? activeUser.id : "";
+    // 2. Identify active user — prefer ownerName stored IN the element (e.auth is null for SDK saves)
+    //    Fall back to e.auth only if the element has no ownerName field.
+    const activeUser = e.auth;
+    const elementOwnerName = lastAddedItem.ownerName || lastAddedItem.userName || "";
+    const elementOwnerId  = lastAddedItem.ownerId  || lastAddedItem.userId  || "";
 
+    const activeUserName = elementOwnerName
+      || (activeUser ? (activeUser.get("name") || activeUser.get("username") || "") : "")
+      || "Squadmate";
+
+    const activeUserId = elementOwnerId
+      || (activeUser ? activeUser.id : "");
+
+    console.log("[Notifications] Active user resolved as:", activeUserName, "| id:", activeUserId);
     // Customize message based on the exact item type
     let actionMessage = "added a new item to the board! ✨";
     if (itemType === "photo") actionMessage = "added a new photo 📷";

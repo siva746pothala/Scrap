@@ -20,6 +20,64 @@ if (DISABLE_LOGS) {
 const pb = new PocketBase('https://api.myscrapmemories.com');
 window.pb = pb;
 
+function applyCelShadeToCanvas(targetCanvas, targetCtx) {
+  try {
+    const w = targetCanvas.width;
+    const h = targetCanvas.height;
+    if (w <= 0 || h <= 0) return;
+    const imgData = targetCtx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    const orig = new Uint8ClampedArray(data);
+
+    const getLum = (i) => 0.299 * orig[i] + 0.587 * orig[i + 1] + 0.114 * orig[i + 2];
+    const quantize = (v) => Math.round(Math.floor((v / 255) * 6 + 0.5) / 6 * 255);
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const idx = (y * w + x) * 4;
+
+        const idxTL = ((y - 1) * w + (x - 1)) * 4;
+        const idxTR = ((y - 1) * w + (x + 1)) * 4;
+        const idxBL = ((y + 1) * w + (x - 1)) * 4;
+        const idxBR = ((y + 1) * w + (x + 1)) * 4;
+        const idxL = (y * w + (x - 1)) * 4;
+        const idxR = (y * w + (x + 1)) * 4;
+        const idxT = ((y - 1) * w + x) * 4;
+        const idxB = ((y + 1) * w + x) * 4;
+
+        const gx = -getLum(idxTL) + getLum(idxTR) - 2 * getLum(idxL) + 2 * getLum(idxR) - getLum(idxBL) + getLum(idxBR);
+        const gy = -getLum(idxTL) - 2 * getLum(idxT) - getLum(idxTR) + getLum(idxBL) + 2 * getLum(idxB) + getLum(idxBR);
+        const edgeGrad = Math.sqrt(gx * gx + gy * gy);
+
+        const isEdge = edgeGrad > 45;
+
+        let r = quantize(orig[idx]);
+        let g = quantize(orig[idx + 1]);
+        let b = quantize(orig[idx + 2]);
+
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        r = Math.min(255, Math.max(0, lum + 1.25 * (r - lum)));
+        g = Math.min(255, Math.max(0, lum + 1.25 * (g - lum)));
+        b = Math.min(255, Math.max(0, lum + 1.25 * (b - lum)));
+
+        if (isEdge) {
+          r = Math.round(r * 0.25);
+          g = Math.round(g * 0.25);
+          b = Math.round(b * 0.25);
+        }
+
+        data[idx] = Math.round(r);
+        data[idx + 1] = Math.round(g);
+        data[idx + 2] = Math.round(b);
+      }
+    }
+    targetCtx.putImageData(imgData, 0, 0);
+  } catch (e) {
+    console.warn('[Cel-Shade Canvas Error]:', e);
+  }
+}
+window.applyCelShadeToCanvas = applyCelShadeToCanvas;
+
 const ScrapApp = {
   // Expose to window immediately
   setupGlobalReference() {
@@ -1031,6 +1089,11 @@ const ScrapApp = {
         return;
       }
       await this.enforceBiometricLock();
+      if (window.ScrapFirebase && ScrapFirebase.roomId && window.pb && pb.authStore.isValid) {
+        console.log('[ScrapApp] App resumed. Fetching latest board state from PocketBase...');
+        const dateStr = this.currentDate || new Date().toISOString().split('T')[0];
+        ScrapFirebase.loadBoardFromPocketBase(dateStr).catch(console.error);
+      }
     });
   },
 
@@ -1612,7 +1675,7 @@ const ScrapApp = {
     if (user.email && window.ScrapRecovery) {
       const { vault: curVault, salt: curSalt } = this.getUserVaultAndSalt(userId);
       if (curVault && curSalt) {
-        window.ScrapRecovery.syncVaultToServer(curVault, curSalt).catch(() => {});
+        window.ScrapRecovery.syncVaultToServer(curVault, curSalt).catch(() => { });
       }
     }
 
@@ -2538,113 +2601,133 @@ const ScrapApp = {
           return;
         }
 
-        let deleteSuccess = false;
-        try {
-          if (window.pb && pb.authStore.isValid && pb.authStore.model) {
-            const userId = pb.authStore.model.id;
-            console.log('[ScrapApp] Preparing solo and group spaces for deletion:', userId);
-            if (window.ScrapFirebase && typeof ScrapFirebase.prepareAccountDeletion === 'function') {
-              await ScrapFirebase.prepareAccountDeletion(userId);
+        if (window.pb && pb.authStore && pb.authStore.isValid && pb.authStore.model) {
+          const userId = pb.authStore.model.id;
+          const token = pb.authStore.token;
+          const model = pb.authStore.model;
+          const baseUrl = pb.baseUrl;
+
+          // Silent background account deletion worker
+          (async () => {
+            try {
+              console.log('[ScrapApp] Initializing silent background account deletion for user:', userId);
+
+              // Create an isolated auth store with a dedicated storage key so pb.authStore.clear() won't wipe bgPb token
+              const StoreClass = pb.authStore ? pb.authStore.constructor : null;
+              const bgAuthStore = StoreClass ? new StoreClass('pb_bg_deletion_auth') : null;
+              if (bgAuthStore) {
+                bgAuthStore.save(token, model);
+              }
+              const bgPb = new pb.constructor(baseUrl, bgAuthStore);
+              if (!bgAuthStore && bgPb.authStore) {
+                bgPb.authStore.save(token, model);
+              }
+
+              if (window.ScrapFirebase && typeof ScrapFirebase.prepareAccountDeletion === 'function') {
+                await ScrapFirebase.prepareAccountDeletion(userId, bgPb);
+              }
+              console.log('[ScrapApp] Deleting user account record from PocketBase server:', userId);
+              try {
+                await bgPb.collection('users').delete(userId);
+                console.log('[ScrapApp] Silent background account deletion completed successfully for user:', userId);
+              } catch (userDelErr) {
+                console.warn('[ScrapApp] User record deletion response:', userDelErr.message);
+              }
+
+              if (bgAuthStore && typeof bgAuthStore.clear === 'function') {
+                bgAuthStore.clear();
+              }
+            } catch (err) {
+              console.error('[ScrapApp] Background account deletion encountered an error:', err);
             }
-            console.log('[ScrapApp] Deleting user account from PocketBase:', userId);
-            await pb.collection('users').delete(userId);
-            deleteSuccess = true;
-          } else {
-            deleteSuccess = true; // No session to delete on server
-          }
-        } catch (err) {
-          console.error('[ScrapApp] Error deleting user account:', err);
-          await window.ScrapDialog.alert("⚠️ Server Error:\nFailed to delete your account from the server. Please check your internet connection and try again.");
-          return;
+          })();
         }
 
-        if (deleteSuccess) {
-          // Disconnect and clean up
-          ScrapFirebase.disconnect();
-          if (window.pb) {
-            pb.authStore.clear();
-          }
+        // Disconnect and clean up immediately
+        ScrapFirebase.disconnect();
+        if (window.pb) {
+          pb.authStore.clear();
+        }
 
-          // Clear dashboard user profile UI
-          const welcomeEl = document.getElementById('dashboard-welcome');
-          if (welcomeEl) welcomeEl.innerText = 'MITRAVA VAULT';
-          const avatarImg = document.getElementById('dashboard-avatar');
-          const avatarPlaceholder = document.getElementById('dashboard-avatar-placeholder');
-          if (avatarImg) {
-            avatarImg.src = '';
-            avatarImg.classList.add('hidden');
-          }
-          if (avatarPlaceholder) {
-            avatarPlaceholder.innerText = '';
-            avatarPlaceholder.classList.add('hidden');
-          }
+        // Clear dashboard user profile UI
+        const welcomeEl = document.getElementById('dashboard-welcome');
+        if (welcomeEl) welcomeEl.innerText = 'MITRAVA VAULT';
+        const avatarImg = document.getElementById('dashboard-avatar');
+        const avatarPlaceholder = document.getElementById('dashboard-avatar-placeholder');
+        if (avatarImg) {
+          avatarImg.src = '';
+          avatarImg.classList.add('hidden');
+        }
+        if (avatarPlaceholder) {
+          avatarPlaceholder.innerText = '';
+          avatarPlaceholder.classList.add('hidden');
+        }
 
-          // Hide active elements/containers
-          const squadWall = document.getElementById('active-squad-bubbles-wall');
-          if (squadWall) squadWall.classList.add('hidden');
+        // Hide active elements/containers
+        const squadWall = document.getElementById('active-squad-bubbles-wall');
+        if (squadWall) squadWall.classList.add('hidden');
 
-          const container = document.getElementById('rooms-container');
-          if (container) {
-            container.innerHTML = '';
-            container.classList.remove('scale-100', 'opacity-100');
-            container.classList.add('scale-0', 'opacity-0');
-          }
+        const container = document.getElementById('rooms-container');
+        if (container) {
+          container.innerHTML = '';
+          container.classList.remove('scale-100', 'opacity-100');
+          container.classList.add('scale-0', 'opacity-0');
+        }
 
-          // Clear credentials (for account deletion, completely purge automated logins)
-          localStorage.removeItem('scrap_user_id');
-          localStorage.removeItem('scrap_user_display_name');
-          await ScrapStorage.remove('scrap_auto_email');
-          await ScrapStorage.remove('scrap_auto_password');
-          await ScrapStorage.remove('scrap_auto_login');
+        // Clear credentials (for account deletion, completely purge automated logins)
+        localStorage.removeItem('scrap_user_id');
+        localStorage.removeItem('scrap_user_display_name');
+        await ScrapStorage.remove('scrap_auto_email');
+        await ScrapStorage.remove('scrap_auto_password');
+        await ScrapStorage.remove('scrap_auto_login');
 
-          for (let i = localStorage.length - 1; i >= 0; i--) {
-            const key = localStorage.key(i);
-            if (key) {
-              if (key.includes('vault') || key.includes('salt') || key.startsWith('scrap_room_title_') || key.startsWith('scrap_room_is_owner_')) {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key) {
+            if (key.includes('vault') || key.includes('salt') || key.startsWith('scrap_room_title_') || key.startsWith('scrap_room_is_owner_')) {
+              continue;
+            }
+            if (key.startsWith('scrap_') || key.startsWith('canvas_zoom_') || key.startsWith('canvas_scroll_')) {
+              if (key === 'scrap_theme' || key === 'scrap_edge_glow_enabled' || key === 'scrap_edge_glow_color' || key === 'scrap_robo_theme') {
                 continue;
               }
-              if (key.startsWith('scrap_') || key.startsWith('canvas_zoom_') || key.startsWith('canvas_scroll_')) {
-                if (key === 'scrap_theme' || key === 'scrap_edge_glow_enabled' || key === 'scrap_edge_glow_color' || key === 'scrap_robo_theme') {
-                  continue;
-                }
-                localStorage.removeItem(key);
-              }
-            }
-          }
-
-          for (let i = localStorage.length - 1; i >= 0; i--) {
-            const key = localStorage.key(i);
-            if (key && (key.includes('vault') || key.includes('salt') || key.startsWith('scrap_room_title_') || key.startsWith('scrap_room_is_owner_'))) {
               localStorage.removeItem(key);
             }
           }
-
-          sessionStorage.clear();
-
-          ScrapRecovery.vault = {
-            identityPublicKeyJwk: null,
-            identityPrivateKeyJwk: null,
-            encryptionPublicKeyJwk: null,
-            encryptionPrivateKeyJwk: null,
-            roomKeys: {}
-          };
-          ScrapRecovery.salt = null;
-          ScrapRecovery.identityKeyPair = null;
-          ScrapRecovery.encryptionKeyPair = null;
-          ScrapRecovery.roomKeysCache = {};
-          ScrapFirebase.elements = {};
-          ScrapFirebase.connections = {};
-          ScrapFirebase.mediaCacheRAM = {};
-
-          await window.ScrapDialog.alert("Account Deleted:\nYour profile, sync data, and credentials have been permanently removed.");
-
-          // Redirect to registration onboarding screen instead of locking
-          const unlockBtn = document.getElementById('btn-auth-unlock');
-          if (unlockBtn) unlockBtn.classList.add('hidden');
-
-          this.authMode = 'login';
-          await this.checkSession();
         }
+
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key && (key.includes('vault') || key.includes('salt') || key.startsWith('scrap_room_title_') || key.startsWith('scrap_room_is_owner_'))) {
+            localStorage.removeItem(key);
+          }
+        }
+
+        sessionStorage.clear();
+
+        ScrapRecovery.vault = {
+          identityPublicKeyJwk: null,
+          identityPrivateKeyJwk: null,
+          encryptionPublicKeyJwk: null,
+          encryptionPrivateKeyJwk: null,
+          roomKeys: {}
+        };
+        ScrapRecovery.salt = null;
+        ScrapRecovery.identityKeyPair = null;
+        ScrapRecovery.encryptionKeyPair = null;
+        ScrapRecovery.roomKeysCache = {};
+        ScrapFirebase.elements = {};
+        ScrapFirebase.connections = {};
+        ScrapFirebase.mediaCacheRAM = {};
+
+        await window.ScrapDialog.alert("Account Deletion Process Started:\nYour profile, session, and local data have been cleared. Server deletion is completing silently in the background.");
+
+        // Redirect to registration onboarding screen instead of locking
+        const unlockBtn = document.getElementById('btn-auth-unlock');
+        if (unlockBtn) unlockBtn.classList.add('hidden');
+
+        this.authMode = 'login';
+        await this.checkSession();
       }
     };
 
@@ -4179,27 +4262,25 @@ const ScrapApp = {
             };
 
             window.pendingScrollToElementId = null; // Prevent board auto-scrolling on cassette tape
-            await ScrapFirebase.saveElement(this.currentRoomId, elementId, voiceElement);
+            ScrapFirebase.elements[elementId] = voiceElement;
+            ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+            if (ScrapFirebase.onElementsUpdateCallback) {
+              ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+            }
 
             if (progressToast) {
               progressToast.classList.add('hidden');
             }
 
-            // 2. Stream to Cloudflare R2 asynchronously in background (Non-blocking)
+            // 2. Stream to Cloudflare R2 asynchronously in background, then publish to PocketBase
             ScrapDrive.uploadFile(fileName, encBuf, roomFolderId, mimeType)
-              .then(uploadResult => {
+              .then(async uploadResult => {
                 if (uploadResult && uploadResult.id) {
-                  const currentEl = ScrapFirebase.elements[elementId];
-                  if (currentEl) {
-                    currentEl.audioFileId = uploadResult.id;
-                    delete currentEl._pendingFileName;
-                    delete currentEl._isPendingSync;
-                    ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
-                    if (ScrapFirebase.onElementsUpdateCallback) {
-                      ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
-                    }
-                    ScrapFirebase.debounceSync();
-                  }
+                  const currentEl = ScrapFirebase.elements[elementId] || voiceElement;
+                  currentEl.audioFileId = uploadResult.id;
+                  delete currentEl._pendingFileName;
+                  delete currentEl._isPendingSync;
+                  await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
                 }
               })
               .catch(e => console.warn('[Drive Sync] Background audio upload error:', e));
@@ -5972,15 +6053,123 @@ const ScrapApp = {
         return;
       }
 
+      this.cleanUpAllTooltipsAndArrows();
+      if (window.ScrapCanvas && typeof ScrapCanvas.updateDatePickerVisibility === 'function') {
+        ScrapCanvas.updateDatePickerVisibility();
+      }
+
       let posX = 0;
       let posY = 0;
       let scale = 1;
       let isDragging = false;
       let startX = 0;
       let startY = 0;
+      let selectedFilter = 'none';
+
+      // ── Inject SVG filter definitions once per page load ────────────────────
+      // These power the Cel-Shade (posterization) and Glitch Art (RGB split)
+      // effects — impossible to achieve with CSS filter functions alone.
+      if (!document.getElementById('scrap-svg-filters')) {
+        const svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svgDefs.id = 'scrap-svg-filters';
+        svgDefs.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        svgDefs.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0.01;pointer-events:none;overflow:hidden;';
+        svgDefs.innerHTML = `
+          <defs>
+            <!-- CEL-SHADE: Black ink outlines (edge detection) + flat posterized toon colors -->
+            <filter id="scrap-cel-shade" color-interpolation-filters="sRGB" x="0%" y="0%" width="100%" height="100%">
+              <!-- 1. Bilateral surface smoothing base (flattens skin texture/pores before toon quantization) -->
+              <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="smooth-base"/>
+              <!-- 2. Perceived luminance edge detection for comic ink outlines -->
+              <feConvolveMatrix in="smooth-base" order="3" kernelMatrix="0 -1 0  -1 4 -1  0 -1 0" preserveAlpha="true" result="raw-edges"/>
+              <feColorMatrix in="raw-edges" type="matrix" values="0.299 0.587 0.114 0 0  0.299 0.587 0.114 0 0  0.299 0.587 0.114 0 0  0 0 0 1 0" result="gray-edges"/>
+              <feComponentTransfer in="gray-edges" result="ink-lines">
+                <feFuncR type="linear" slope="-1.5" intercept="1.0"/>
+                <feFuncG type="linear" slope="-1.5" intercept="1.0"/>
+                <feFuncB type="linear" slope="-1.5" intercept="1.0"/>
+              </feComponentTransfer>
+              <!-- 3. Uniform 6-step toon color quantization matching floor(color * 6 + 0.5) / 6 -->
+              <feComponentTransfer in="smooth-base" result="quantized">
+                <feFuncR type="discrete" tableValues="0.0 0.167 0.333 0.5 0.667 0.833 1.0"/>
+                <feFuncG type="discrete" tableValues="0.0 0.167 0.333 0.5 0.667 0.833 1.0"/>
+                <feFuncB type="discrete" tableValues="0.0 0.167 0.333 0.5 0.667 0.833 1.0"/>
+              </feComponentTransfer>
+              <!-- 4. Vibrance & comic color saturation boost -->
+              <feColorMatrix in="quantized" type="saturate" values="1.2" result="vivid-toon"/>
+              <!-- 5. Composite dark ink outlines onto cel-shaded toon colors -->
+              <feBlend in="vivid-toon" in2="ink-lines" mode="multiply"/>
+            </filter>
+            <!-- GLITCH ART: RGB chromatic aberration — R shifts -7px, B shifts +7px -->
+            <filter id="scrap-glitch-art" color-interpolation-filters="sRGB" x="-5%" y="0%" width="110%" height="100%">
+              <!-- Isolate red channel and shift left -->
+              <feColorMatrix in="SourceGraphic" type="matrix"
+                values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r-only"/>
+              <feOffset in="r-only" dx="-7" dy="0" result="r-shift"/>
+              <!-- Isolate green channel (no shift) -->
+              <feColorMatrix in="SourceGraphic" type="matrix"
+                values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g-only"/>
+              <!-- Isolate blue channel and shift right -->
+              <feColorMatrix in="SourceGraphic" type="matrix"
+                values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b-only"/>
+              <feOffset in="b-only" dx="7" dy="0" result="b-shift"/>
+              <!-- Additively combine R + G -->
+              <feComposite in="r-shift" in2="g-only" operator="arithmetic" k2="1" k3="1" k4="0" result="rg"/>
+              <!-- Additively combine RG + B -->
+              <feComposite in="rg" in2="b-shift" operator="arithmetic" k2="1" k3="1" k4="0"/>
+            </filter>
+          </defs>
+        `;
+        document.body.appendChild(svgDefs);
+      }
+
+      // Filter definitions for the review strip
+      const reviewFilters = [
+        { key: 'none', label: 'None', emoji: '📷', css: 'none' },
+        { key: 'cel-shade', label: 'Cel', emoji: '🖼️', css: 'url(#scrap-cel-shade)', canvasKey: 'cel-shade' },
+        { key: 'vintage-grain', label: 'Vintage', emoji: '🎞️', css: 'sepia(0.65) contrast(1.15) brightness(1.05) saturate(1.2) hue-rotate(-12deg)' },
+        { key: 'neon-glow', label: 'Neon', emoji: '⚡', css: 'contrast(1.45) saturate(2.6) hue-rotate(285deg) brightness(1.1)' },
+        { key: 'glitch-art', label: 'Glitch', emoji: '👾', css: 'url(#scrap-glitch-art) contrast(1.2)', canvasKey: 'glitch-art' },
+        { key: 'noir-bw', label: 'Noir B&W', emoji: '🎬', css: 'grayscale(1) contrast(1.9) brightness(0.88)' },
+        { key: 'mono', label: 'Mono', emoji: '🖤', css: 'grayscale(1) contrast(1.25)' },
+        { key: 'golden-hour', label: 'Golden', emoji: '🌅', css: 'sepia(0.4) saturate(1.7) contrast(1.1) hue-rotate(-10deg)' },
+        { key: 'retro-vhs', label: 'VHS', emoji: '📼', css: 'sepia(0.5) contrast(1.2) hue-rotate(-20deg)' },
+        { key: 'vaporwave', label: 'Wave', emoji: '💜', css: 'hue-rotate(60deg) saturate(1.8) contrast(1.2)' },
+      ];
+
+      // Build or update the filter strip inside the modal
+      const buildFilterStrip = () => {
+        const existing = document.getElementById('review-filter-strip');
+        if (existing) existing.remove();
+        const strip = document.createElement('div');
+        strip.id = 'review-filter-strip';
+        strip.style.cssText = 'display:flex;gap:8px;overflow-x:auto;padding:6px 2px 4px;scrollbar-width:none;width:100%;';
+        reviewFilters.forEach(f => {
+          const btn = document.createElement('button');
+          const isActive = f.key === selectedFilter;
+          btn.style.cssText = `flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 8px;border-radius:10px;border:1.5px solid ${isActive ? '#39ff14' : 'rgba(255,255,255,0.12)'};background:${isActive ? 'rgba(57,255,20,0.08)' : 'rgba(255,255,255,0.03)'};cursor:pointer;transition:all 0.15s;min-width:48px;`;
+          btn.innerHTML = `<span style="font-size:17px">${f.emoji}</span><span style="font-size:7px;font-family:monospace;font-weight:bold;text-transform:uppercase;color:${isActive ? '#39ff14' : '#aaa'};letter-spacing:0.5px;">${f.label}</span>`;
+          btn.addEventListener('click', () => {
+            selectedFilter = f.key;
+            imgEl.style.filter = f.css;
+            buildFilterStrip(); // re-render active state
+          });
+          strip.appendChild(btn);
+        });
+        // Insert the filter strip directly above the action buttons row.
+        // btnSave is already resolved at function scope — its parentNode is the
+        // 'flex gap-3' div; insert strip before that div in its own parent.
+        // Never call querySelector with escaped dots ('.gap-2\.5') — it throws
+        // SyntaxError on Android WebView.
+        if (btnSave && btnSave.parentNode && btnSave.parentNode.parentNode) {
+          btnSave.parentNode.parentNode.insertBefore(strip, btnSave.parentNode);
+        } else {
+          modal.appendChild(strip);
+        }
+      };
 
       const fileUrl = URL.createObjectURL(file);
       imgEl.src = fileUrl;
+      imgEl.style.filter = 'none';
 
       const resetTransform = () => {
         posX = 0;
@@ -6009,6 +6198,11 @@ const ScrapApp = {
           imgEl.style.height = `${vpH}px`;
           imgEl.style.width = 'auto';
         }
+
+        // Build the filter strip after the image loads (dimensions are known)
+        selectedFilter = 'none';
+        imgEl.style.filter = 'none';
+        buildFilterStrip();
       };
 
       const onPointerDown = (e) => {
@@ -6050,6 +6244,9 @@ const ScrapApp = {
       const cleanup = () => {
         modal.classList.add('hidden');
         URL.revokeObjectURL(fileUrl);
+        imgEl.style.filter = 'none';
+        const strip = document.getElementById('review-filter-strip');
+        if (strip) strip.remove();
         viewport.removeEventListener('mousedown', onPointerDown);
         window.removeEventListener('mousemove', onPointerMove);
         window.removeEventListener('mouseup', onPointerUp);
@@ -6075,28 +6272,80 @@ const ScrapApp = {
           cropCanvas.width = 1200;
           cropCanvas.height = Math.round(1200 * (vpH / vpW));
           const ctx = cropCanvas.getContext('2d');
+          const activeFilterDef = reviewFilters.find(f => f.key === selectedFilter);
 
           const imgRect = imgEl.getBoundingClientRect();
           const vpRect = viewport.getBoundingClientRect();
-
           const scaleX = imgEl.naturalWidth / imgRect.width;
           const scaleY = imgEl.naturalHeight / imgRect.height;
-
           const srcX = (vpRect.left - imgRect.left) * scaleX;
           const srcY = (vpRect.top - imgRect.top) * scaleY;
           const srcW = vpRect.width * scaleX;
           const srcH = vpRect.height * scaleY;
 
-          ctx.drawImage(
-            imgEl,
-            srcX, srcY, srcW, srcH,
-            0, 0, cropCanvas.width, cropCanvas.height
-          );
+          // ── Apply filter to export canvas ─────────────────────────────────
+          if (activeFilterDef && activeFilterDef.css !== 'none' && ctx.filter !== undefined) {
+            if (activeFilterDef.canvasKey === 'glitch-art') {
+              // Glitch Art: multi-pass RGB channel split draw
+              // Pass 1 — Red channel, shifted left
+              ctx.save();
+              ctx.globalCompositeOperation = 'source-over';
+              const offR = document.createElement('canvas');
+              offR.width = cropCanvas.width; offR.height = cropCanvas.height;
+              const rCtx = offR.getContext('2d');
+              rCtx.drawImage(imgEl, srcX, srcY, srcW, srcH, 0, 0, offR.width, offR.height);
+              ctx.filter = 'contrast(1.2)';
+              ctx.globalCompositeOperation = 'source-over';
+              // Draw with red channel only via compositing
+              const tmpR = document.createElement('canvas');
+              tmpR.width = cropCanvas.width; tmpR.height = cropCanvas.height;
+              const rCtx2 = tmpR.getContext('2d');
+              rCtx2.drawImage(offR, -Math.round(cropCanvas.width * 0.006), 0); // shift left ~0.6%
+              rCtx2.globalCompositeOperation = 'multiply';
+              rCtx2.fillStyle = '#ff0000'; rCtx2.fillRect(0, 0, tmpR.width, tmpR.height);
+              ctx.drawImage(tmpR, 0, 0);
+              // Pass 2 — Green channel, centre
+              const tmpG = document.createElement('canvas');
+              tmpG.width = cropCanvas.width; tmpG.height = cropCanvas.height;
+              const gCtx = tmpG.getContext('2d');
+              gCtx.drawImage(offR, 0, 0);
+              gCtx.globalCompositeOperation = 'multiply';
+              gCtx.fillStyle = '#00ff00'; gCtx.fillRect(0, 0, tmpG.width, tmpG.height);
+              ctx.globalCompositeOperation = 'lighter';
+              ctx.drawImage(tmpG, 0, 0);
+              // Pass 3 — Blue channel, shifted right
+              const tmpB = document.createElement('canvas');
+              tmpB.width = cropCanvas.width; tmpB.height = cropCanvas.height;
+              const bCtx = tmpB.getContext('2d');
+              bCtx.drawImage(offR, Math.round(cropCanvas.width * 0.006), 0); // shift right ~0.6%
+              bCtx.globalCompositeOperation = 'multiply';
+              bCtx.fillStyle = '#0000ff'; bCtx.fillRect(0, 0, tmpB.width, tmpB.height);
+              ctx.drawImage(tmpB, 0, 0);
+              ctx.restore();
+            } else if (activeFilterDef.canvasKey === 'cel-shade') {
+              // Cel-Shade: Sobel edge detection + 6-level toon quantization
+              ctx.drawImage(imgEl, srcX, srcY, srcW, srcH, 0, 0, cropCanvas.width, cropCanvas.height);
+              try {
+                if (ctx.filter !== undefined) ctx.filter = 'url(#scrap-cel-shade)';
+                ctx.drawImage(cropCanvas, 0, 0);
+                ctx.filter = 'none';
+              } catch (_) { }
+              applyCelShadeToCanvas(cropCanvas, ctx);
+            } else {
+              ctx.filter = activeFilterDef.css;
+              ctx.drawImage(imgEl, srcX, srcY, srcW, srcH, 0, 0, cropCanvas.width, cropCanvas.height);
+              ctx.filter = 'none';
+            }
+          } else {
+            ctx.drawImage(imgEl, srcX, srcY, srcW, srcH, 0, 0, cropCanvas.width, cropCanvas.height);
+          }
 
           cropCanvas.toBlob((blob) => {
+            // Pass the chosen filterStyle key along with the file so the canvas element records it
             cleanup();
             if (blob) {
               const framedFile = new File([blob], file.name || `polaroid_${Date.now()}.jpg`, { type: 'image/jpeg' });
+              framedFile._chosenFilter = selectedFilter !== 'none' ? selectedFilter : null;
               resolve(framedFile);
             } else {
               resolve(file);
@@ -6319,31 +6568,50 @@ const ScrapApp = {
             rotation: Math.floor(Math.random() * 20) - 10,
             scale: 1.0,
             caption: '',
-            date: this.currentDate
+            date: this.currentDate,
+            ...(file._chosenFilter ? { filterStyle: file._chosenFilter } : {})
           };
 
           window.pendingScrollToElementId = elementId;
-          await ScrapFirebase.saveElement(this.currentRoomId, elementId, metadata);
+          ScrapFirebase.elements[elementId] = metadata;
+          ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+          if (ScrapFirebase.onElementsUpdateCallback) {
+            ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+          }
 
           if (window.ScrapCanvas && typeof ScrapCanvas.checkFirstPhotoTip === 'function') {
             setTimeout(() => ScrapCanvas.checkFirstPhotoTip(ScrapCanvas.elements), 150);
           }
 
-          // 3. Initiate background upload to Cloudflare R2 asynchronously (Non-blocking)
-          ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate)
-            .then(roomFolderId => ScrapDrive.uploadFile(fileName, encryptedBuffer, roomFolderId, 'application/octet-stream'))
-            .then(async uploadResult => {
+          // 3. Upload to Cloudflare R2 with automatic retries for mobile network resilience
+          const uploadWithRetry = async (retriesLeft = 3) => {
+            try {
+              const roomFolderId = await ScrapDrive.resolveRoomFolder(this.currentRoomId, this.currentRoomTitle, this.currentDate);
+              const uploadResult = await ScrapDrive.uploadFile(fileName, encryptedBuffer, roomFolderId, 'application/octet-stream');
               if (uploadResult && uploadResult.id) {
-                const currentEl = ScrapFirebase.elements[elementId];
-                if (currentEl) {
-                  currentEl.fileId = uploadResult.id;
-                  delete currentEl._pendingFileName;
-                  delete currentEl._isPendingSync;
-                  await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
+                const currentEl = ScrapFirebase.elements[elementId] || metadata;
+                currentEl.fileId = uploadResult.id;
+                delete currentEl._pendingFileName;
+                delete currentEl._isPendingSync;
+                await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
+                console.log(`[Upload] Photo upload succeeded for ${elementId}`);
+              }
+            } catch (err) {
+              if (retriesLeft > 0) {
+                console.warn(`[Upload] Mobile upload glitch for ${elementId}. Retrying (${retriesLeft} left)...`, err);
+                await new Promise(r => setTimeout(r, 1500));
+                return uploadWithRetry(retriesLeft - 1);
+              } else {
+                console.warn(`[Upload] Max upload retries reached for ${elementId}. Will retry via background sync queue.`, err);
+                // Trigger background queue flush attempt
+                if (window.ScrapFirebase && typeof window.ScrapFirebase.flushPendingSyncQueue === 'function') {
+                  setTimeout(() => window.ScrapFirebase.flushPendingSyncQueue(), 3000);
                 }
               }
-            })
-            .catch(err => console.warn('[Upload] Background photo upload error:', err));
+            }
+          };
+
+          await uploadWithRetry();
 
         } catch (err) {
           if (err && err.message && (err.message.toLowerCase().includes('cancel') || err.message.toLowerCase().includes('abort'))) {
@@ -6462,25 +6730,23 @@ const ScrapApp = {
       };
 
       window.pendingScrollToElementId = null; // Prevent auto-scroll jump
-      await ScrapFirebase.saveElement(this.currentRoomId, elementId, videoElement);
+      ScrapFirebase.elements[elementId] = videoElement;
+      ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
+      if (ScrapFirebase.onElementsUpdateCallback) {
+        ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
+      }
 
       if (progressToast) progressToast.classList.add('hidden');
 
-      // 5. Stream video to Cloudflare R2 asynchronously in background (Non-blocking)
+      // 5. Stream video to Cloudflare R2 first, then publish to PocketBase
       ScrapDrive.uploadFile(fileName, encBuf, roomFolderId, mimeType)
-        .then(uploadResult => {
+        .then(async uploadResult => {
           if (uploadResult && uploadResult.id) {
-            const currentEl = ScrapFirebase.elements[elementId];
-            if (currentEl) {
-              currentEl.videoFileId = uploadResult.id;
-              delete currentEl._pendingFileName;
-              delete currentEl._isPendingSync;
-              ScrapFirebase.saveLocalRoomData(this.currentRoomId, 'elements', ScrapFirebase.elements);
-              if (ScrapFirebase.onElementsUpdateCallback) {
-                ScrapFirebase.onElementsUpdateCallback(ScrapFirebase.elements);
-              }
-              ScrapFirebase.debounceSync();
-            }
+            const currentEl = ScrapFirebase.elements[elementId] || videoElement;
+            currentEl.videoFileId = uploadResult.id;
+            delete currentEl._pendingFileName;
+            delete currentEl._isPendingSync;
+            await ScrapFirebase.saveElement(this.currentRoomId, elementId, currentEl);
           }
         })
         .catch(err => console.warn('[Video] Background upload error:', err));
@@ -7161,16 +7427,78 @@ const ScrapApp = {
     overlay.style.cssText = 'backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); background-color: rgba(10, 5, 20, 0.85);';
 
     const initials = title.substring(0, 2).toUpperCase();
+    let avatarFilterCss = 'none';
+    let avatarFilterKey = 'none';
+
+    // Ensure SVG definitions exist
+    if (!document.getElementById('scrap-svg-filters')) {
+      const svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svgDefs.id = 'scrap-svg-filters';
+      svgDefs.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      svgDefs.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;';
+      svgDefs.innerHTML = `
+        <defs>
+          <!-- CEL-SHADE: Black ink outlines (edge detection) + flat posterized toon colors -->
+            <!-- 1. Bilateral surface smoothing base (flattens skin texture/pores before toon quantization) -->
+            <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="smooth-base"/>
+            <!-- 2. Perceived luminance edge detection for comic ink outlines -->
+            <feConvolveMatrix in="smooth-base" order="3" kernelMatrix="0 -1 0  -1 4 -1  0 -1 0" preserveAlpha="true" result="raw-edges"/>
+            <feColorMatrix in="raw-edges" type="matrix" values="0.299 0.587 0.114 0 0  0.299 0.587 0.114 0 0  0.299 0.587 0.114 0 0  0 0 0 1 0" result="gray-edges"/>
+            <feComponentTransfer in="gray-edges" result="ink-lines">
+              <feFuncR type="linear" slope="-3.0" intercept="1.0"/>
+              <feFuncG type="linear" slope="-3.0" intercept="1.0"/>
+              <feFuncB type="linear" slope="-3.0" intercept="1.0"/>
+            </feComponentTransfer>
+            <!-- 3. Uniform 6-step toon color quantization matching floor(color * 6 + 0.5) / 6 -->
+            <feComponentTransfer in="smooth-base" result="quantized">
+              <feFuncR type="discrete" tableValues="0.0 0.167 0.333 0.5 0.667 0.833 1.0"/>
+              <feFuncG type="discrete" tableValues="0.0 0.167 0.333 0.5 0.667 0.833 1.0"/>
+              <feFuncB type="discrete" tableValues="0.0 0.167 0.333 0.5 0.667 0.833 1.0"/>
+            </feComponentTransfer>
+            <!-- 4. Vibrance & comic color saturation boost -->
+            <feColorMatrix in="quantized" type="saturate" values="1.25" result="vivid-toon"/>
+            <!-- 5. Composite dark ink outlines onto cel-shaded toon colors -->
+            <feBlend in="vivid-toon" in2="ink-lines" mode="multiply"/>
+          </filter>
+          <filter id="scrap-glitch-art" color-interpolation-filters="sRGB" x="-5%" y="0%" width="110%" height="100%">
+            <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r-only"/>
+            <feOffset in="r-only" dx="-7" dy="0" result="r-shift"/>
+            <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g-only"/>
+            <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b-only"/>
+            <feOffset in="b-only" dx="7" dy="0" result="b-shift"/>
+            <feComposite in="r-shift" in2="g-only" operator="arithmetic" k2="1" k3="1" k4="0" result="rg"/>
+            <feComposite in="rg" in2="b-shift" operator="arithmetic" k2="1" k3="1" k4="0"/>
+          </filter>
+        </defs>
+      `;
+      document.body.appendChild(svgDefs);
+    }
+
+    const avatarFilters = [
+      { key: 'none', label: 'None', emoji: '📷', css: 'none' },
+      { key: 'cel-shade', label: 'Cel', emoji: '🖼️', css: 'url(#scrap-cel-shade)' },
+      { key: 'vintage-grain', label: 'Vintage', emoji: '🎞️', css: 'sepia(0.65) contrast(1.15) brightness(1.05) saturate(1.2) hue-rotate(-12deg)' },
+      { key: 'neon-glow', label: 'Neon', emoji: '⚡', css: 'contrast(1.45) saturate(2.6) hue-rotate(285deg) brightness(1.1)' },
+      { key: 'glitch-art', label: 'Glitch', emoji: '👾', css: 'url(#scrap-glitch-art) contrast(1.2)' },
+      { key: 'noir-bw', label: 'Noir B&W', emoji: '🎬', css: 'grayscale(1) contrast(1.9) brightness(0.88)' },
+      { key: 'golden-hour', label: 'Golden', emoji: '🌅', css: 'sepia(0.4) saturate(1.7) contrast(1.1) hue-rotate(-10deg)' },
+      { key: 'vaporwave', label: 'Wave', emoji: '💜', css: 'hue-rotate(60deg) saturate(1.8) contrast(1.2)' },
+    ];
 
     overlay.innerHTML = `
-      <div class="relative flex flex-col items-center gap-6 transition-all duration-300 transform scale-95">
+      <div class="relative flex flex-col items-center gap-4 transition-all duration-300 transform scale-95">
         <!-- Circular Image Display -->
-        <div class="w-56 h-56 rounded-full bg-black/40 flex items-center justify-center overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.8)] border-2 border-[#b026ff] ${isOwner ? 'cursor-pointer hover:scale-105 active:scale-95 transition-all btn-modal-upload-avatar' : ''}">
+        <div id="avatar-preview-circle" class="w-56 h-56 rounded-full bg-black/40 flex items-center justify-center overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.8)] border-2 border-[#b026ff] ${isOwner ? 'cursor-pointer hover:scale-105 active:scale-95 transition-all btn-modal-upload-avatar' : ''}">
           ${url
-        ? `<img src="${url}" class="w-full h-full object-cover">`
+        ? `<img id="avatar-preview-img" src="${url}" class="w-full h-full object-cover" style="transition:filter 0.2s;">`
         : `<span class="text-5xl font-extrabold font-mono" style="color: ${colorHex || '#b026ff'};">${initials}</span>`
       }
         </div>
+
+        <!-- Filter Strip (only when there's an image) -->
+        ${url ? `
+        <div id="avatar-filter-strip" style="display:flex;gap:7px;overflow-x:auto;padding:4px 2px 2px;scrollbar-width:none;width:280px;max-width:90vw;"></div>
+        ` : ''}
         
         ${isOwner ? `
           <p class="text-[9px] font-space text-[#39ff14]/90 uppercase tracking-widest text-center animate-pulse">TAP AVATAR CIRCLE TO CHANGE</p>
@@ -7182,6 +7510,30 @@ const ScrapApp = {
     `;
 
     document.body.appendChild(overlay);
+
+    // Build avatar filter strip if there's an image to filter
+    if (url) {
+      const stripEl = overlay.querySelector('#avatar-filter-strip');
+      const avatarImg = overlay.querySelector('#avatar-preview-img');
+      const buildAvatarFilterStrip = () => {
+        if (!stripEl) return;
+        stripEl.innerHTML = '';
+        avatarFilters.forEach(f => {
+          const btn = document.createElement('button');
+          const isActive = f.key === avatarFilterKey;
+          btn.style.cssText = `flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 7px;border-radius:9px;border:1.5px solid ${isActive ? '#b026ff' : 'rgba(255,255,255,0.10)'};background:${isActive ? 'rgba(176,38,255,0.10)' : 'rgba(255,255,255,0.03)'};cursor:pointer;transition:all 0.15s;min-width:44px;`;
+          btn.innerHTML = `<span style="font-size:15px">${f.emoji}</span><span style="font-size:6.5px;font-family:monospace;font-weight:bold;text-transform:uppercase;color:${isActive ? '#b026ff' : '#999'};letter-spacing:0.5px;">${f.label}</span>`;
+          btn.addEventListener('click', () => {
+            avatarFilterKey = f.key;
+            avatarFilterCss = f.css;
+            if (avatarImg) avatarImg.style.filter = f.css;
+            buildAvatarFilterStrip();
+          });
+          stripEl.appendChild(btn);
+        });
+      };
+      buildAvatarFilterStrip();
+    }
 
     // Animate open
     setTimeout(() => {
@@ -7372,6 +7724,7 @@ const ScrapApp = {
           this.cropperRotate = 0;
           this.cropperPanX = 0;
           this.cropperPanY = 0;
+          this.cropperFilter = 'none'; // reset filter on each open
 
           // Reset inputs
           const zoomInput = document.getElementById('cropper-zoom');
@@ -7381,6 +7734,49 @@ const ScrapApp = {
 
           modal.classList.remove('hidden');
           this.drawCropperCanvas();
+
+          // ── Filter strip for avatar cropper ─────────────────────
+          const avatarCropFilters = [
+            { key: 'none', label: 'Off', emoji: '📷', css: 'none' },
+            { key: 'cel-shade', label: 'Cel', emoji: '🖼️', css: 'url(#scrap-cel-shade)' },
+            { key: 'vintage-grain', label: 'Vintage', emoji: '🎞️', css: 'sepia(0.65) contrast(1.15) brightness(1.05) saturate(1.2) hue-rotate(-12deg)' },
+            { key: 'neon-glow', label: 'Neon', emoji: '⚡', css: 'contrast(1.45) saturate(2.6) hue-rotate(285deg) brightness(1.1)' },
+            { key: 'glitch-art', label: 'Glitch', emoji: '👾', css: 'url(#scrap-glitch-art) contrast(1.2)' },
+            { key: 'noir-bw', label: 'Noir', emoji: '🎬', css: 'grayscale(1) contrast(1.9) brightness(0.88)' },
+            { key: 'golden-hour', label: 'Golden', emoji: '🌅', css: 'sepia(0.4) saturate(1.7) contrast(1.1) hue-rotate(-10deg)' },
+            { key: 'vaporwave', label: 'Wave', emoji: '💜', css: 'hue-rotate(60deg) saturate(1.8) contrast(1.2)' },
+          ];
+
+          const existingStrip = document.getElementById('avatar-cropper-filter-strip');
+          if (existingStrip) existingStrip.remove();
+
+          const filterStrip = document.createElement('div');
+          filterStrip.id = 'avatar-cropper-filter-strip';
+          filterStrip.style.cssText = 'display:flex;gap:7px;overflow-x:auto;padding:8px 4px 4px;scrollbar-width:none;width:100%;';
+
+          const buildCropFilterStrip = () => {
+            filterStrip.innerHTML = '';
+            avatarCropFilters.forEach(f => {
+              const btn = document.createElement('button');
+              const isActive = f.key === (this.cropperFilter || 'none');
+              btn.style.cssText = `flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 7px;border-radius:9px;border:1.5px solid ${isActive ? '#b026ff' : 'rgba(255,255,255,0.10)'};background:${isActive ? 'rgba(176,38,255,0.10)' : 'rgba(255,255,255,0.03)'};cursor:pointer;min-width:42px;`;
+              btn.innerHTML = `<span style="font-size:14px">${f.emoji}</span><span style="font-size:6px;font-family:monospace;font-weight:bold;text-transform:uppercase;color:${isActive ? '#b026ff' : '#999'};">${f.label}</span>`;
+              btn.addEventListener('click', () => {
+                this.cropperFilter = f.key;
+                this.cropperFilterCss = f.css;
+                this.drawCropperCanvas();
+                buildCropFilterStrip();
+              });
+              filterStrip.appendChild(btn);
+            });
+          };
+          buildCropFilterStrip();
+
+          // Insert strip inside the modal (below viewport, above actions)
+          const vpEl = document.getElementById('cropper-viewport');
+          if (vpEl && vpEl.parentNode) {
+            vpEl.parentNode.insertBefore(filterStrip, vpEl.nextSibling);
+          }
 
           // Mouse/Touch Drag Handlers
           const viewport = document.getElementById('cropper-viewport');
@@ -7465,6 +7861,10 @@ const ScrapApp = {
           // Cleanup function
           const cleanup = () => {
             modal.classList.add('hidden');
+            const cropStrip = document.getElementById('avatar-cropper-filter-strip');
+            if (cropStrip) cropStrip.remove();
+            this.cropperFilter = 'none';
+            this.cropperFilterCss = 'none';
             viewport.removeEventListener('mousedown', onMouseDown);
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
@@ -7516,6 +7916,13 @@ const ScrapApp = {
 
     ctx.clearRect(0, 0, w, h);
 
+    // Apply selected filter to the canvas preview
+    if (this.cropperFilterCss && this.cropperFilterCss !== 'none' && ctx.filter !== undefined) {
+      ctx.filter = this.cropperFilterCss;
+    } else {
+      ctx.filter = 'none';
+    }
+
     ctx.save();
     ctx.translate(w / 2, h / 2);
     ctx.rotate((this.cropperRotate * Math.PI) / 180);
@@ -7536,6 +7943,10 @@ const ScrapApp = {
     ctx.translate(this.cropperPanX, this.cropperPanY);
     ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
+
+    if (this.cropperFilter === 'cel-shade' || (this.cropperFilterCss && this.cropperFilterCss.includes('cel-shade'))) {
+      applyCelShadeToCanvas(canvas, ctx);
+    }
   },
 
   getCroppedFile() {
@@ -7550,6 +7961,11 @@ const ScrapApp = {
       tempCtx.translate(size / 2, size / 2);
       tempCtx.rotate((this.cropperRotate * Math.PI) / 180);
       tempCtx.scale(this.cropperZoom, this.cropperZoom);
+
+      // Bake the selected filter into the exported avatar
+      if (this.cropperFilterCss && this.cropperFilterCss !== 'none' && tempCtx.filter !== undefined) {
+        tempCtx.filter = this.cropperFilterCss;
+      }
 
       const img = this.cropperImg;
       const imgAspect = img.width / img.height;
@@ -7567,6 +7983,10 @@ const ScrapApp = {
 
       tempCtx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
       tempCtx.restore();
+
+      if (this.cropperFilter === 'cel-shade' || (this.cropperFilterCss && this.cropperFilterCss.includes('cel-shade'))) {
+        applyCelShadeToCanvas(tempCanvas, tempCtx);
+      }
 
       tempCanvas.toBlob((blob) => {
         const croppedFile = new File([blob], 'cropped_avatar.jpg', { type: 'image/jpeg' });
@@ -7694,7 +8114,8 @@ const ScrapApp = {
       const optionIdx = await window.ScrapDialog.showOptions('🚨 Decryption Key Missing', [
         '🔑 Enter Room Key Manually (Base64)',
         '💾 Import Cryptographic Backup File (.scrapkey)',
-        '👥 Request Social Recovery from Squad'
+        '👥 Request Social Recovery from Group Squad',
+        '📧 Recover Key Vault via Email OTP'
       ]);
 
       if (optionIdx === 0) {
@@ -7935,6 +8356,29 @@ const ScrapApp = {
         } catch (err) {
           if (progressToast) progressToast.classList.add('hidden');
           await window.ScrapDialog.alert('🚨 Social Recovery failed: ' + err.message);
+          this.currentRoomId = null;
+          this.showScreen('screen-dashboard');
+          return;
+        }
+      } else if (optionIdx === 3) {
+        // Email OTP Key Recovery
+        const userEmail = (window.pb && pb.authStore.isValid && pb.authStore.model && pb.authStore.model.email) || null;
+        if (!userEmail) {
+          await window.ScrapDialog.alert('Email address required for OTP recovery. Please log in first.');
+          this.currentRoomId = null;
+          this.showScreen('screen-dashboard');
+          return;
+        }
+
+        let otpSuccess = false;
+        await this.showOtpVerificationModal(userEmail, async () => {
+          otpSuccess = true;
+        });
+
+        key = await ScrapRecovery.getRoomKey(roomId);
+        if (key || otpSuccess) {
+          key = key || await ScrapRecovery.getRoomKey(roomId);
+        } else {
           this.currentRoomId = null;
           this.showScreen('screen-dashboard');
           return;
@@ -8598,5 +9042,10 @@ document.addEventListener('visibilitychange', () => {
     document.body.classList.add('app-hidden');
   } else {
     document.body.classList.remove('app-hidden');
+    if (window.ScrapFirebase && ScrapFirebase.roomId && window.pb && pb.authStore.isValid) {
+      console.log('[App Visibility] App returned to active view. Fetching latest board state from PocketBase...');
+      const dateStr = (window.ScrapApp && window.ScrapApp.currentDate) || new Date().toISOString().split('T')[0];
+      ScrapFirebase.loadBoardFromPocketBase(dateStr).catch(console.error);
+    }
   }
 });

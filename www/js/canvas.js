@@ -1086,7 +1086,28 @@ const ScrapCanvas = {
       return;
     }
 
-    // Hide tooltip when Scrapbook modal, Mood Radar modal, or Squad Members sidebar are active
+    // Hide tooltip when photo preview, cropper, Scrapbook, Mood Radar, or Squad Members are active
+    const photoCropper = document.getElementById('polaroid-cropper-overlay');
+    if (photoCropper && !photoCropper.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    const avatarCropper = document.getElementById('modal-avatar-cropper');
+    if (avatarCropper && !avatarCropper.classList.contains('hidden')) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
+    const photoFilterPicker = document.getElementById('photo-filter-picker-modal');
+    if (photoFilterPicker) {
+      if (existing) existing.remove();
+      if (existingSvg) existingSvg.remove();
+      return;
+    }
+
     const modalScrapbook = document.getElementById('modal-scrapbook');
     if (modalScrapbook && !modalScrapbook.classList.contains('hidden')) {
       if (existing) existing.remove();
@@ -1467,7 +1488,7 @@ const ScrapCanvas = {
               <div class="absolute -top-3.5 -left-3 w-10 h-4 bg-yellow-400/40 border border-yellow-400/20 rotate-[-25deg] shadow-sm" style="background-image: repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 4px);"></div>
               <div class="absolute -top-3.5 -right-3 w-10 h-4 bg-pink-400/40 border border-pink-400/20 rotate-[25deg] shadow-sm" style="background-image: repeating-linear-gradient(-45deg, transparent, transparent 2px, rgba(255,255,255,0.3) 2px, rgba(255,255,255,0.3) 4px);"></div>
             </div>
-            <div class="relative w-full h-40 bg-black overflow-hidden flex items-center justify-center border border-gray-200" style="${borderCSS.photo || ''}">
+            <div class="photo-frame-box relative w-full h-40 bg-black overflow-hidden flex items-center justify-center border border-gray-200 ${data.filterStyle ? 'filter-container-' + data.filterStyle : ''}" style="${borderCSS.photo || ''}">
               <span class="loading-label text-[10px] font-space text-purple-600 animate-pulse font-bold">Decrypting...</span>
               <img class="w-full h-full object-cover hidden select-none ${filterClass}" style="object-position: ${data.objectPosition || 'center 20%'}" alt="Photo" draggable="false" />
             </div>
@@ -1500,7 +1521,11 @@ const ScrapCanvas = {
             }
           }
         }
-        // Also apply filter class update
+        // Also apply filter class and filter container overlay update
+        const photoFrame = contentContainer.querySelector('.photo-frame-box') || contentContainer.querySelector('.relative.w-full.h-40');
+        if (photoFrame) {
+          photoFrame.className = `photo-frame-box relative w-full h-40 bg-black overflow-hidden flex items-center justify-center border border-gray-200 ${data.filterStyle ? 'filter-container-' + data.filterStyle : ''}`;
+        }
         const img = contentContainer.querySelector('img');
         if (img) {
           img.className = 'w-full h-full object-cover select-none';
@@ -1509,7 +1534,7 @@ const ScrapCanvas = {
           }
           // If image hasn't loaded or decrypted yet, re-trigger decryption upon sync update
           if (img.classList.contains('hidden') || !img.src || img.src.length < 50) {
-            this.decryptAndDisplayImage(id, data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl, contentContainer);
+            this.decryptAndDisplayImage(id, data.fileId || data.encryptedData || data.url || data.localPath || data.src || data.dataUrl, contentContainer);
           }
         }
       }
@@ -2428,13 +2453,18 @@ const ScrapCanvas = {
   getCanvasFilterString(style) {
     if (!style) return 'none';
     const s = String(style).toLowerCase();
-    if (s.includes('gray') || s.includes('bw')) return 'grayscale(100%)';
-    if (s.includes('sepia') || s.includes('vintage')) return 'sepia(80%) contrast(110%)';
-    if (s.includes('warm')) return 'sepia(30%) saturate(140%) brightness(105%)';
+    if (s.includes('vintage') || s.includes('grain')) return 'sepia(65%) contrast(115%) brightness(105%) saturate(120%) hue-rotate(-12deg)';
+    if (s.includes('neon') || s.includes('cyberpunk')) return 'contrast(145%) saturate(260%) hue-rotate(285deg) brightness(110%)';
+    if (s.includes('glitch')) return 'contrast(135%) saturate(190%) hue-rotate(85deg)';
+    if (s.includes('noir')) return 'grayscale(100%) contrast(190%) brightness(88%)';
+    if (s.includes('cel') || s.includes('shade')) return 'contrast(108%) saturate(100%) brightness(100%)';
+    if (s.includes('gray') || s.includes('bw') || s.includes('mono')) return 'grayscale(100%) contrast(125%)';
+    if (s.includes('sepia')) return 'sepia(80%) contrast(110%)';
+    if (s.includes('warm') || s.includes('golden')) return 'sepia(40%) saturate(170%) contrast(110%) hue-rotate(-10deg)';
     if (s.includes('cold')) return 'hue-rotate(180deg) saturate(120%)';
     if (s.includes('cyber')) return 'hue-rotate(270deg) contrast(140%) saturate(160%)';
     if (s.includes('dramatic')) return 'contrast(160%) brightness(90%) saturate(130%)';
-    if (s.includes('retro')) return 'sepia(50%) contrast(120%) hue-rotate(-20deg)';
+    if (s.includes('retro') || s.includes('vhs')) return 'sepia(50%) contrast(120%) hue-rotate(-20deg)';
     if (s.includes('invert')) return 'invert(100%)';
     return 'none';
   },
@@ -2484,7 +2514,7 @@ const ScrapCanvas = {
 
     // Queue decryptions sequentially to prevent concurrent Web Crypto thread race conditions
     this.decryptQueue = this.decryptQueue.then(async () => {
-      const liveEl = document.getElementById(`element-${id}`) || container;
+      const liveEl = document.getElementById(`item_${id}`) || document.getElementById(`element-${id}`) || container;
       const img = liveEl ? liveEl.querySelector('img') : null;
       const loader = liveEl ? liveEl.querySelector('.loading-label') : null;
       const elData = (this.elements && this.elements[id]) ? this.elements[id] : {};
@@ -2492,9 +2522,12 @@ const ScrapCanvas = {
       // 1. Direct Image URL / Local Cache / R2 Filename Check
       let directUrl = elData._decryptedDataUrl || elData.url || elData.localPath || elData.src || elData.dataUrl;
 
-      const targetRef = (typeof encryptedDataOrFileId === 'string' && encryptedDataOrFileId.trim())
-        ? encryptedDataOrFileId.trim()
-        : (elData.fileId || elData._pendingFileName || '');
+      // Always resolve to the latest server fileId if available, fallback to targetRef or _pendingFileName
+      const targetRef = (elData.fileId && elData.fileId.trim())
+        ? elData.fileId.trim()
+        : ((typeof encryptedDataOrFileId === 'string' && encryptedDataOrFileId.trim())
+          ? encryptedDataOrFileId.trim()
+          : (elData._pendingFileName || ''));
 
       if (!directUrl && targetRef) {
         if (
@@ -2609,19 +2642,31 @@ const ScrapCanvas = {
           const retries = this._retryCounts[id] || 0;
           if (retries < 25) {
             this._retryCounts[id] = retries + 1;
-            if (loader) loader.innerText = 'Syncing... ⏳';
+            if (loader) {
+              loader.innerHTML = '<span class="animate-pulse text-amber-300">Syncing... ⏳</span>';
+              loader.className = 'text-[9px] font-mono text-amber-300 font-bold z-30 select-none';
+            }
             setTimeout(() => {
               this.decryptAndDisplayImage(id, encryptedDataOrFileId, container);
             }, 2500);
           } else if (loader) {
             delete this._retryCounts[id];
-            loader.innerHTML = '<span class="cursor-pointer underline">⚠️ Tap to sync 🔄</span>';
-            loader.className = 'text-[9px] font-mono text-amber-400 font-bold z-30 cursor-pointer select-none';
-            loader.onclick = (evt) => {
-              evt.stopPropagation();
-              loader.innerText = 'Syncing... ⏳';
+            loader.innerHTML = '<span class="cursor-pointer underline p-1">⚠️ Tap to sync 🔄</span>';
+            loader.className = 'loading-label text-[9px] font-mono text-amber-400 font-bold z-30 cursor-pointer select-none';
+            
+            const handleManualSyncTap = (evt) => {
+              if (evt) {
+                evt.stopPropagation();
+                if (evt.cancelable) evt.preventDefault();
+              }
+              this._retryCounts[id] = 0; // Reset retry counter on user tap
+              loader.innerHTML = '<span class="animate-pulse text-amber-300">Syncing... ⏳</span>';
+              loader.onclick = null;
+              loader.ontouchstart = null;
               this.decryptAndDisplayImage(id, encryptedDataOrFileId, container);
             };
+            loader.onclick = handleManualSyncTap;
+            loader.ontouchstart = handleManualSyncTap;
           }
         }
       }
@@ -3693,12 +3738,16 @@ const ScrapCanvas = {
 
         const filterOptions = [
           { key: 'none', emoji: '📷', label: 'None' },
+          { key: 'cel-shade', emoji: '🖼️', label: 'Cel-Shade' },
+          { key: 'vintage-grain', emoji: '🎞️', label: 'Vintage' },
+          { key: 'neon-glow', emoji: '⚡', label: 'Neon' },
+          { key: 'glitch-art', emoji: '👾', label: 'Glitch' },
+          { key: 'noir-bw', emoji: '🎬', label: 'Noir B&W' },
           { key: 'mono', emoji: '🖤', label: 'Mono' },
           { key: 'golden-hour', emoji: '🌅', label: 'Golden' },
           { key: 'cyber-matrix', emoji: '👽', label: 'Matrix' },
-          { key: 'retro-vhs', emoji: '📼', label: 'VHS Scan' },
+          { key: 'retro-vhs', emoji: '📼', label: 'VHS' },
           { key: 'vaporwave', emoji: '💜', label: 'Vaporwave' },
-          { key: 'cyber-neon', emoji: '🧬', label: 'Neon' },
           { key: 'matcha', emoji: '🍵', label: 'Matcha' }
         ];
 
@@ -5203,25 +5252,29 @@ const ScrapCanvas = {
     const bottomBar = document.getElementById('canvas-bottom-bar');
     const workspace = document.getElementById('canvas-workspace');
 
-    if (!datePickerContainer) return;
-
     const isCollageFlowActive = collageFlowBar && !collageFlowBar.classList.contains('hidden');
+    const photoCropper = document.getElementById('polaroid-cropper-overlay');
+    const avatarCropper = document.getElementById('modal-avatar-cropper');
+    const photoFilterPicker = document.getElementById('photo-filter-picker-modal');
+    const isPhotoModalActive = (photoCropper && !photoCropper.classList.contains('hidden')) ||
+                               (avatarCropper && !avatarCropper.classList.contains('hidden')) ||
+                               !!photoFilterPicker;
 
-    if (isCollageFlowActive) {
+    if (isCollageFlowActive || isPhotoModalActive) {
       document.body.classList.add('collage-flow-mode-active');
-      datePickerContainer.classList.add('hidden');
-      if (workspace) {
+      if (datePickerContainer) datePickerContainer.classList.add('hidden');
+      if (workspace && isCollageFlowActive) {
         workspace.style.display = 'none';
         workspace.style.pointerEvents = 'none';
       }
-      if (bottomBar) bottomBar.classList.add('hidden');
+      if (bottomBar && isCollageFlowActive) bottomBar.classList.add('hidden');
       const existing = document.getElementById('canvas-empty-date-info-banner');
       const existingSvg = document.getElementById('canvas-empty-date-arrow-svg');
       if (existing) existing.remove();
       if (existingSvg) existingSvg.remove();
     } else {
       document.body.classList.remove('collage-flow-mode-active');
-      datePickerContainer.classList.remove('hidden');
+      if (datePickerContainer) datePickerContainer.classList.remove('hidden');
       if (workspace) {
         workspace.style.display = '';
         workspace.style.pointerEvents = '';

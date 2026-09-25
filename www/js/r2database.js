@@ -185,10 +185,10 @@ const ScrapDrive = {
     return this.uploadFile(fileName, arrayBuffer, roomFolderId);
   },
 
-  async deleteFile(fileId) {
+  async deleteFile(fileId, pbClient = window.pb) {
     console.log('[LocalDrive] Deleting file from Cloudflare R2:', fileId);
     if (window.ScrapR2) {
-      await window.ScrapR2.delete(fileId);
+      await window.ScrapR2.delete(fileId, pbClient);
     }
     await this.deleteLocalCacheFile(fileId);
 

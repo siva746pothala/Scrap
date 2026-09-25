@@ -240,7 +240,7 @@ const ScrapRecovery = {
     try {
       const Filesystem = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
       if (Filesystem) {
-        const sessionPin = sessionStorage.getItem('scrap_pin_session') || '000000';
+        const cleanTargetTitle = (roomTitle || '').replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toLowerCase();
         for (const dir of ['DOCUMENTS', 'CACHE']) {
           try {
             const res = await Filesystem.readdir({ path: '', directory: dir });
@@ -251,64 +251,39 @@ const ScrapRecovery = {
                   const lowerName = fileName.toLowerCase();
                   let shouldDelete = false;
 
-                  if (roomTitle && lowerName.includes(roomTitle)) {
+                  // 1. Check filename prefix matching this specific room title (sb_<cleanTitle>_...)
+                  if (cleanTargetTitle && cleanTargetTitle.length >= 3 && lowerName.startsWith(`sb_${cleanTargetTitle}`)) {
                     shouldDelete = true;
-                  } else {
-                    // Read file content as backup check to see if it belongs to this room
-                    try {
-                      const fileRes = await Filesystem.readFile({
-                        path: fileName,
-                        directory: dir,
-                        encoding: 'utf8'
-                      });
-                      const content = fileRes && (fileRes.data || fileRes.content || fileRes);
-                      const str = typeof content === 'string' ? content : JSON.stringify(content);
-                      
-                      let parsed = null;
-                      try { parsed = typeof content === 'object' ? content : JSON.parse(str); } catch (_) {}
-
-                      if (parsed) {
-                        if (parsed.roomId === roomId || (roomTitle && parsed.roomTitle && parsed.roomTitle.toLowerCase().includes(roomTitle))) {
-                          shouldDelete = true;
-                        } else if (parsed.vault && parsed.salt) {
-                          const userId = (typeof ScrapFirebase !== 'undefined' && ScrapFirebase.userId) || localStorage.getItem('scrap_user_id') || 'default';
-                          const curVault = localStorage.getItem(`scrap_local_vault_${userId}`);
-                          const curSalt = localStorage.getItem(`scrap_local_salt_${userId}`);
-
-                          if ((curVault && parsed.vault === curVault) || (curSalt && parsed.salt === curSalt)) {
-                            shouldDelete = true;
-                          } else {
-                            // Try unlocking vault to check if this scrapkey file contains key for roomId or matching key bytes
-                            try {
-                              const saltBuf = ScrapCrypto.base64ToArrayBuffer(parsed.salt);
-                              const aesKey = await ScrapCrypto.deriveKeyFromPin(sessionPin, saltBuf);
-                              const decBuf = await ScrapCrypto.decryptData(ScrapCrypto.base64ToArrayBuffer(parsed.vault), aesKey);
-                              const fileVaultStr = ScrapCrypto.bufferToString(decBuf);
-                              const fileVault = JSON.parse(fileVaultStr);
-                              if (fileVault && fileVault.roomKeys) {
-                                if (fileVault.roomKeys[roomId]) {
-                                  shouldDelete = true;
-                                } else if (targetKeyK) {
-                                  for (const rk of Object.values(fileVault.roomKeys)) {
-                                    if (rk && rk.k === targetKeyK) {
-                                      shouldDelete = true;
-                                      break;
-                                    }
-                                  }
-                                }
-                              }
-                            } catch (_) {}
-                          }
-                        }
-                      }
-                      if (!shouldDelete && str && ((roomId && str.includes(roomId)) || (roomTitle && str.toLowerCase().includes(roomTitle)))) {
-                        shouldDelete = true;
-                      }
-                    } catch (_) {}
                   }
 
+                  // 2. Read file content to check if it explicitly targets this roomId/roomTitle
+                  try {
+                    const fileRes = await Filesystem.readFile({
+                      path: fileName,
+                      directory: dir,
+                      encoding: 'utf8'
+                    });
+                    const content = fileRes && (fileRes.data || fileRes.content || fileRes);
+                    const str = typeof content === 'string' ? content : JSON.stringify(content);
+                    
+                    let parsed = null;
+                    try { parsed = typeof content === 'object' ? content : JSON.parse(str); } catch (_) {}
+
+                    if (parsed) {
+                      // Explicit room ID match
+                      if (roomId && parsed.roomId === roomId) {
+                        shouldDelete = true;
+                      } 
+                      // Explicit room title match
+                      else if (roomTitle && parsed.roomTitle && parsed.roomTitle.trim().toLowerCase() === roomTitle.trim().toLowerCase()) {
+                        shouldDelete = true;
+                      }
+                      // Master backups or key files for other rooms must NOT be deleted
+                    }
+                  } catch (_) {}
+
                   if (shouldDelete) {
-                    console.log(`[deleteRoomKey] Deleting backup key file: ${dir}/${fileName}`);
+                    console.log(`[deleteRoomKey] Deleting backup key file for room ${roomId}: ${dir}/${fileName}`);
                     await Filesystem.deleteFile({ path: fileName, directory: dir }).catch(() => {});
                   }
                 }

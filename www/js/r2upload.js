@@ -7,12 +7,13 @@ const ScrapR2 = {
   endpoint: 'https://4d6b71a94148fa81bf2f974ffa012d16.r2.cloudflarestorage.com',
   bucket: 'myscrap-media',
 
-  async getPresignedUrl(method, fileName, mimeType = '') {
-    if (!window.pb) {
+  async getPresignedUrl(method, fileName, mimeType = '', pbClient = window.pb) {
+    const client = pbClient || window.pb;
+    if (!client) {
       throw new Error("PocketBase client is not initialized.");
     }
     // Requests the pre-signed URL for the specified method (PUT, GET, or DELETE)
-    const response = await window.pb.send("/api/r2-presign", {
+    const response = await client.send("/api/r2-presign", {
       query: { 
         filename: fileName,
         method: method,
@@ -96,9 +97,9 @@ const ScrapR2 = {
     }
   },
 
-  async delete(fileName) {
+  async delete(fileName, pbClient = window.pb) {
     try {
-      const deleteUrl = await this.getPresignedUrl('DELETE', fileName);
+      const deleteUrl = await this.getPresignedUrl('DELETE', fileName, '', pbClient);
 
       const res = await fetch(deleteUrl, {
         method: 'DELETE'

@@ -138,7 +138,7 @@ window.ScrapDialog = {
       `;
 
       modal.innerHTML = `
-        <div style="background:#120921; border:1px solid rgba(0,255,204,0.3); border-radius:24px; padding:24px; width:100%; max-width:320px; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,0.8);" class="animate-in fade-in zoom-in-95 duration-200">
+        <div style="background:#120921; border:1px solid rgba(0,255,204,0.3); border-radius:24px; padding:24px; width:100%; max-width:340px; max-height:85vh; overflow-y:auto; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,0.8);" class="animate-in fade-in zoom-in-95 duration-200">
           <p style="color:#fff; font-family:monospace; font-size:12px; line-height:1.6; margin-bottom:20px; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">${message}</p>
           <div style="display:flex; flex-direction:column; gap:4px;">
             ${buttonsHtml}

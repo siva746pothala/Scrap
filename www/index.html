@@ -312,9 +312,11 @@
   <div id="screen-canvas" class="screen hidden fixed inset-0 bg-black overflow-hidden select-none">
 
     <!-- Ambient Purple Glows -->
-    <div class="ambient-purple-glow absolute top-[10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-[#b026ff]/8 blur-[100px] pointer-events-none z-[15]">
+    <div
+      class="ambient-purple-glow absolute top-[10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-[#b026ff]/8 blur-[100px] pointer-events-none z-[15]">
     </div>
-    <div class="ambient-purple-glow absolute bottom-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-[#b026ff]/8 blur-[100px] pointer-events-none z-[15]">
+    <div
+      class="ambient-purple-glow absolute bottom-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-[#b026ff]/8 blur-[100px] pointer-events-none z-[15]">
     </div>
 
     <!-- Floating Collage Flow Time Filter Bar (Hidden by default, toggled via Gear -> Collage Flow) -->
@@ -399,7 +401,7 @@
           class="px-2.5 py-1 bg-white border border-black/10 hover:border-yellow-500 rounded-full flex items-center gap-1.5 w-max"
           title="Export Cryptographic Backup">
           <span class="text-xs">💾</span>
-          <span class="text-[9px] font-space font-bold text-black uppercase tracking-wider">Backup</span>
+          <span class="text-[9px] font-space font-bold text-black uppercase tracking-wider">Download Room Key</span>
         </button>
         <button id="btn-share-canvas"
           class="px-2.5 py-1 bg-white border border-black/10 hover:border-[#00f0ff] rounded-full flex items-center gap-1.5 w-max"
@@ -598,7 +600,8 @@
       </div>
     </div>
     <!-- Full Screen Story Reel Modal -->
-    <div id="story-reel-modal" class="hidden fixed inset-0 z-[99999] bg-black/95 backdrop-blur-xl flex flex-col justify-between p-4 select-none">
+    <div id="story-reel-modal"
+      class="hidden fixed inset-0 z-[99999] bg-black/95 backdrop-blur-xl flex flex-col justify-between p-4 select-none">
       <!-- Story Top Progress Bars -->
       <div class="w-full flex flex-col gap-2 z-10 pt-2">
         <div id="story-reel-progress-container" class="w-full flex gap-1.5 h-1">
@@ -608,18 +611,21 @@
         <!-- Header Controls -->
         <div class="flex items-center justify-between px-1">
           <div class="flex items-center gap-2">
-            <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-[#b026ff] to-[#39ff14] flex items-center justify-center text-xs font-bold text-black font-space">
+            <div
+              class="w-7 h-7 rounded-full bg-gradient-to-tr from-[#b026ff] to-[#39ff14] flex items-center justify-center text-xs font-bold text-black font-space">
               📸
             </div>
             <div class="flex flex-col">
-              <span id="story-reel-author" class="text-xs font-space font-bold text-white tracking-wide">Memory Story</span>
+              <span id="story-reel-author" class="text-xs font-space font-bold text-white tracking-wide">Memory
+                Story</span>
               <span id="story-reel-date" class="text-[9px] font-space text-gray-400">Sep 16, 2026</span>
             </div>
           </div>
 
           <div class="flex items-center gap-2">
             <!-- Music Sound Toggle -->
-            <button id="btn-story-music-toggle" class="px-2.5 py-1 rounded-full bg-white/10 border border-white/20 text-[#39ff14] text-[10px] font-space font-bold uppercase flex items-center gap-1 hover:bg-white/20 transition-all">
+            <button id="btn-story-music-toggle"
+              class="px-2.5 py-1 rounded-full bg-white/10 border border-white/20 text-[#39ff14] text-[10px] font-space font-bold uppercase flex items-center gap-1 hover:bg-white/20 transition-all">
               <span id="story-music-icon">🎵</span>
             </button>
 
@@ -635,19 +641,23 @@
 
         <!-- Slide Media -->
         <div class="relative max-h-full max-w-full flex items-center justify-center">
-          <img id="story-reel-img" class="max-h-full max-w-full object-contain rounded-xl shadow-2xl transition-all duration-300 transform scale-100" src="" alt="Story Media" />
+          <img id="story-reel-img"
+            class="max-h-full max-w-full object-contain rounded-xl shadow-2xl transition-all duration-300 transform scale-100"
+            src="" alt="Story Media" />
           <div id="story-reel-attachments" class="absolute inset-0 overflow-hidden pointer-events-none"></div>
         </div>
 
         <!-- Optional Caption Banner -->
-        <div id="story-reel-caption-container" class="hidden absolute bottom-4 left-4 right-4 bg-black/70 backdrop-blur-md border border-white/15 p-3 rounded-xl text-center text-sm font-space text-white z-10 shadow-lg">
+        <div id="story-reel-caption-container"
+          class="hidden absolute bottom-4 left-4 right-4 bg-black/70 backdrop-blur-md border border-white/15 p-3 rounded-xl text-center text-sm font-space text-white z-10 shadow-lg">
           <p id="story-reel-caption" class="truncate"></p>
         </div>
       </div>
 
       <!-- Story Footer Controls -->
       <div class="w-full flex items-center justify-between px-2 pb-2 z-30 relative pointer-events-auto">
-        <button id="btn-story-reel-pause" class="px-4 py-2 mb-[env(safe-area-inset-bottom,0px)] rounded-full bg-orange-500 border border-orange-300 text-black text-xs font-space font-bold uppercase tracking-wider hover:bg-orange-400 transition-all cursor-pointer">
+        <button id="btn-story-reel-pause"
+          class="px-4 py-2 mb-[env(safe-area-inset-bottom,0px)] rounded-full bg-orange-500 border border-orange-300 text-black text-xs font-space font-bold uppercase tracking-wider hover:bg-orange-400 transition-all cursor-pointer">
           ⏸ Pause
         </button>
 
@@ -655,7 +665,8 @@
           <span id="story-reel-current-idx">1</span> / <span id="story-reel-total-count">1</span>
         </div>
 
-        <button id="btn-story-reel-next" class="px-4 py-2 rounded-full bg-[#39ff14] text-black text-xs font-space font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-[0_0_12px_rgba(57,255,20,0.5)]">
+        <button id="btn-story-reel-next"
+          class="px-4 py-2 rounded-full bg-[#39ff14] text-black text-xs font-space font-bold uppercase tracking-wider hover:brightness-110 transition-all shadow-[0_0_12px_rgba(57,255,20,0.5)]">
           Next ➔
         </button>
       </div>
@@ -716,18 +727,18 @@
         <label class="scrapbook-filter-field">
           <span>Month</span>
           <select id="scrapbook-filter-month" class="scrapbook-filter-select">
-          <option value="01">January</option>
-          <option value="02">February</option>
-          <option value="03">March</option>
-          <option value="04">April</option>
-          <option value="05">May</option>
-          <option value="06">June</option>
-          <option value="07">July</option>
-          <option value="08">August</option>
-          <option value="09">September</option>
-          <option value="10">October</option>
-          <option value="11">November</option>
-          <option value="12">December</option>
+            <option value="01">January</option>
+            <option value="02">February</option>
+            <option value="03">March</option>
+            <option value="04">April</option>
+            <option value="05">May</option>
+            <option value="06">June</option>
+            <option value="07">July</option>
+            <option value="08">August</option>
+            <option value="09">September</option>
+            <option value="10">October</option>
+            <option value="11">November</option>
+            <option value="12">December</option>
           </select>
         </label>
       </div>
@@ -1265,13 +1276,13 @@
   <!-- ==============================================
        MODAL: CUSTOM IN-APP CAMERA QR SCANNER
        ============================================== -->
-  <div id="modal-inapp-qr-scanner"
-    class="hidden scanner-modal fixed inset-0 z-[100] flex flex-col text-white">
+  <div id="modal-inapp-qr-scanner" class="hidden scanner-modal fixed inset-0 z-[100] flex flex-col text-white">
     <div class="scanner-backdrop" aria-hidden="true"></div>
 
     <!-- Header -->
     <header class="scanner-header">
-      <button id="btn-stop-inapp-qr-scan" class="scanner-icon-button scanner-back-button" type="button" aria-label="Go back and close QR scanner">
+      <button id="btn-stop-inapp-qr-scan" class="scanner-icon-button scanner-back-button" type="button"
+        aria-label="Go back and close QR scanner">
         <span aria-hidden="true">&#8592;</span>
         <span>Back</span>
       </button>
@@ -1290,8 +1301,8 @@
 
       <!-- Camera Viewfinder -->
       <div class="scanner-viewfinder">
-      <video id="inapp-qr-video" class="w-full h-full object-cover" playsinline autoplay muted></video>
-      <canvas id="inapp-qr-canvas" class="hidden"></canvas>
+        <video id="inapp-qr-video" class="w-full h-full object-cover" playsinline autoplay muted></video>
+        <canvas id="inapp-qr-canvas" class="hidden"></canvas>
 
         <div class="scanner-corner scanner-corner-tl"></div>
         <div class="scanner-corner scanner-corner-tr"></div>
@@ -1304,7 +1315,8 @@
         </div>
       </div>
 
-      <p class="scanner-hint">Keep the entire code inside the frame. Your invite is verified on-device before you join.</p>
+      <p class="scanner-hint">Keep the entire code inside the frame. Your invite is verified on-device before you join.
+      </p>
     </main>
 
     <!-- Bottom Action Controls -->
@@ -1647,7 +1659,8 @@
         <div class="w-12 h-12 border-4 border-t-transparent border-[#39ff14] rounded-full animate-spin"></div>
         <span id="upload-progress-percent" class="absolute text-[10px] font-bold font-mono text-[#39ff14]">0%</span>
       </div>
-      <span id="upload-progress-text" class="text-[#39ff14] uppercase tracking-wider text-[10px] font-bold font-mono text-center">
+      <span id="upload-progress-text"
+        class="text-[#39ff14] uppercase tracking-wider text-[10px] font-bold font-mono text-center">
         Uploading encrypted snap...</span>
     </div>
   </div>
@@ -1832,19 +1845,28 @@
   <!-- ==============================================
        POLAROID PHOTO FRAMING ADJUSTER MODAL
        ============================================== -->
-  <div id="polaroid-cropper-overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center p-4 hidden transition-all duration-300" style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.82);">
+  <div id="polaroid-cropper-overlay"
+    class="fixed inset-0 z-[9999] flex flex-col items-center justify-center p-4 hidden transition-all duration-300"
+    style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background-color: rgba(10, 5, 20, 0.82);">
     <div class="w-full max-w-sm flex flex-col items-center gap-4 bg-[#120822] rounded-2xl p-5 shadow-2xl relative">
 
       <!-- Live Interactive Polaroid Card Preview -->
-      <div class="polaroid-wrapper w-56 p-3 rounded-xl bg-white shadow-2xl relative text-black select-none pointer-events-auto">
+      <div
+        class="polaroid-wrapper w-56 p-3 rounded-xl bg-white shadow-2xl relative text-black select-none pointer-events-auto">
         <!-- Viewport Window (Cropping Frame) -->
-        <div id="polaroid-cropper-viewport" class="relative w-full h-48 bg-black overflow-hidden rounded touch-none flex items-center justify-center cursor-move">
-          <img id="polaroid-cropper-img" class="absolute max-w-none select-none pointer-events-none transition-transform duration-75" alt="Polaroid Adjust" />
-          <span class="absolute bottom-1 right-2 text-[9px] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono pointer-events-none">Drag photo 🖐️</span>
+        <div id="polaroid-cropper-viewport"
+          class="relative w-full h-48 bg-black overflow-hidden rounded touch-none flex items-center justify-center cursor-move">
+          <img id="polaroid-cropper-img"
+            class="absolute max-w-none select-none pointer-events-none transition-transform duration-75"
+            alt="Polaroid Adjust" />
+          <span
+            class="absolute bottom-1 right-2 text-[9px] bg-black/60 text-white px-1.5 py-0.5 rounded font-mono pointer-events-none">Drag
+            photo 🖐️</span>
         </div>
 
         <!-- Polaroid Footer Space -->
-        <div class="h-6 flex items-center justify-center mt-2.5 px-1 font-space text-[9px] tracking-wider uppercase font-bold text-gray-700 border-t border-dashed border-gray-300 pt-1">
+        <div
+          class="h-6 flex items-center justify-center mt-2.5 px-1 font-space text-[9px] tracking-wider uppercase font-bold text-gray-700 border-t border-dashed border-gray-300 pt-1">
           <span>SQUAD MOMENT</span>
         </div>
       </div>
