@@ -8839,53 +8839,59 @@ const ScrapApp = {
       return;
     }
 
+    // ─── BUILD MODAL FIRST so Android renders it immediately ─────────────────
     let otpId = '';
-    try {
-      const res = await window.ScrapRecovery.requestOtpKeyRecovery(targetEmail);
-      otpId = res.otpId || '';
-    } catch (e) {
-      window.ScrapDialog.alert('Could not send OTP email: ' + e.message);
-      return;
-    }
 
     const modal = document.createElement('div');
     modal.id = 'scrap-otp-modal';
-    modal.className = 'fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fade-in select-none';
+    modal.style.position = 'fixed';
+    modal.style.top = '0';
+    modal.style.left = '0';
+    modal.style.right = '0';
+    modal.style.bottom = '0';
+    modal.style.zIndex = '2147483647';
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    modal.style.background = 'rgba(0,0,0,0.85)';
+    modal.style.padding = '16px';
+
     modal.innerHTML = `
-      <div class="relative w-full max-w-sm rounded-3xl p-6 bg-gradient-to-b from-[#1c152d]/95 via-[#120d20]/95 to-[#090611]/98 border border-amber-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_30px_rgba(245,158,11,0.25)] flex flex-col items-center gap-5 text-white">
+      <div id="otp-modal-card" style="background: linear-gradient(180deg, #1c152d 0%, #120d20 50%, #090611 100%); border: 1px solid rgba(245,158,11,0.4); border-radius: 24px; padding: 24px; width: 100%; max-width: 340px; box-shadow: 0 20px 50px rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; gap: 16px; position: relative; color: #ffffff;">
         <!-- Close Button -->
-        <button id="otp-modal-close" class="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold w-8 h-8 rounded-full flex items-center justify-center bg-white/5 hover:bg-white/10 transition-colors">✕</button>
+        <button id="otp-modal-close" style="position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.1); border: none; color: #9ca3af; font-size: 16px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1;">✕</button>
 
-        <div class="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-2xl shadow-[0_0_20px_rgba(245,158,11,0.3)]">
-          🔐
+        <div style="width: 52px; height: 52px; border-radius: 16px; background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); display: flex; align-items: center; justify-content: center; font-size: 24px; box-shadow: 0 0 20px rgba(245,158,11,0.3);">🔐</div>
+
+        <div style="text-align: center;">
+          <h3 style="font-size: 16px; font-weight: 800; color: #fbbf24; font-family: monospace; margin: 0 0 4px 0;">RESTORE VAULT KEYS</h3>
+          <p style="font-size: 11px; color: #d1d5db; margin: 0 0 2px 0;">Enter 6-digit OTP code sent to:</p>
+          <p style="font-size: 12px; font-family: monospace; font-weight: bold; color: #f59e0b; margin: 0; word-break: break-all;">${targetEmail}</p>
         </div>
 
-        <div class="text-center">
-          <h3 class="text-lg font-extrabold text-amber-300 tracking-wide font-mono">RESTORE VAULT KEYS</h3>
-          <p class="text-[11px] text-gray-300 mt-1">Enter 6-digit OTP code sent to:</p>
-          <p class="text-[12px] font-mono font-bold text-amber-400 truncate max-w-[260px] mx-auto mt-0.5">\${targetEmail}</p>
-        </div>
+        <!-- Status / Loading -->
+        <div id="otp-status-row" style="font-size: 11px; font-family: monospace; color: #fbbf24; text-align: center;">⏳ Sending OTP to your email…</div>
 
         <!-- 6-Digit Code Inputs -->
-        <div class="flex items-center gap-2 my-1">
-          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="0" autofocus />
-          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="1" />
-          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="2" />
-          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="3" />
-          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="4" />
-          <input type="text" maxlength="1" inputmode="numeric" class="otp-input w-10 h-12 rounded-xl bg-black/50 border border-amber-500/40 text-center text-xl font-bold font-mono text-amber-300 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner" data-idx="5" />
+        <div style="display: flex; align-items: center; gap: 6px; margin: 4px 0;">
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input" style="width: 38px; height: 46px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid rgba(245,158,11,0.5); text-align: center; font-size: 20px; font-weight: bold; font-family: monospace; color: #fbbf24; outline: none;" data-idx="0" disabled />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input" style="width: 38px; height: 46px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid rgba(245,158,11,0.5); text-align: center; font-size: 20px; font-weight: bold; font-family: monospace; color: #fbbf24; outline: none;" data-idx="1" disabled />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input" style="width: 38px; height: 46px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid rgba(245,158,11,0.5); text-align: center; font-size: 20px; font-weight: bold; font-family: monospace; color: #fbbf24; outline: none;" data-idx="2" disabled />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input" style="width: 38px; height: 46px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid rgba(245,158,11,0.5); text-align: center; font-size: 20px; font-weight: bold; font-family: monospace; color: #fbbf24; outline: none;" data-idx="3" disabled />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input" style="width: 38px; height: 46px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid rgba(245,158,11,0.5); text-align: center; font-size: 20px; font-weight: bold; font-family: monospace; color: #fbbf24; outline: none;" data-idx="4" disabled />
+          <input type="text" maxlength="1" inputmode="numeric" class="otp-input" style="width: 38px; height: 46px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid rgba(245,158,11,0.5); text-align: center; font-size: 20px; font-weight: bold; font-family: monospace; color: #fbbf24; outline: none;" data-idx="5" disabled />
         </div>
 
-        <div id="otp-error-label" class="text-[11px] font-mono text-rose-400 text-center hidden font-bold"></div>
+        <div id="otp-error-label" style="font-size: 11px; font-family: monospace; color: #f87171; text-align: center; display: none; font-weight: bold;"></div>
 
         <!-- Verify Button -->
-        <button id="otp-verify-btn" class="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-black font-extrabold font-mono text-xs tracking-wider uppercase shadow-[0_0_20px_rgba(245,158,11,0.4)] active:scale-95 transition-all">
+        <button id="otp-verify-btn" disabled style="width: 100%; padding: 12px; border-radius: 16px; background: #4b5563; color: #9ca3af; font-weight: 800; font-family: monospace; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; border: none; cursor: not-allowed; box-shadow: none;">
           VERIFY & UNLOCK VAULT 🔑
         </button>
 
-        <!-- Resend Timer -->
-        <div class="text-[10px] font-mono text-gray-400 text-center">
-          Didn't receive code? <span id="otp-resend-btn" class="text-amber-400 font-bold cursor-pointer underline">Resend Email</span>
+        <!-- Resend -->
+        <div style="font-size: 10px; font-family: monospace; color: #9ca3af; text-align: center;">
+          Didn't receive code? <span id="otp-resend-btn" style="color: #6b7280; font-weight: bold; cursor: default; text-decoration: underline;">Resend Email</span>
         </div>
       </div>
     `;
@@ -8893,34 +8899,66 @@ const ScrapApp = {
     document.body.appendChild(modal);
 
     const inputs = modal.querySelectorAll('.otp-input');
-    inputs.forEach((input, index) => {
-      input.addEventListener('input', (e) => {
-        if (e.target.value.length === 1 && index < inputs.length - 1) {
-          inputs[index + 1].focus();
-        }
+    const verifyBtn = modal.querySelector('#otp-verify-btn');
+    const errLabel = modal.querySelector('#otp-error-label');
+    const statusRow = modal.querySelector('#otp-status-row');
+    const resendBtn = modal.querySelector('#otp-resend-btn');
+
+    const enableInputs = () => {
+      inputs.forEach((input, index) => {
+        input.disabled = false;
+        input.addEventListener('input', (e) => {
+          if (e.target.value.length === 1 && index < inputs.length - 1) {
+            inputs[index + 1].focus();
+          }
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Backspace' && !e.target.value && index > 0) {
+            inputs[index - 1].focus();
+          }
+        });
       });
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Backspace' && !e.target.value && index > 0) {
-          inputs[index - 1].focus();
-        }
-      });
-    });
+      inputs[0].focus();
+      verifyBtn.disabled = false;
+      verifyBtn.style.background = 'linear-gradient(90deg, #f59e0b, #fbbf24, #eab308)';
+      verifyBtn.style.color = '#000000';
+      verifyBtn.style.cursor = 'pointer';
+      verifyBtn.style.boxShadow = '0 0 20px rgba(245,158,11,0.4)';
+      verifyBtn.innerText = 'VERIFY & UNLOCK VAULT 🔑';
+      resendBtn.style.color = '#fbbf24';
+      resendBtn.style.cursor = 'pointer';
+    };
 
     modal.querySelector('#otp-modal-close').onclick = () => modal.remove();
 
-    const verifyBtn = modal.querySelector('#otp-verify-btn');
-    const errLabel = modal.querySelector('#otp-error-label');
+    // ─── Send OTP in background — modal is already visible ────────────────────
+    (async () => {
+      try {
+        const res = await window.ScrapRecovery.requestOtpKeyRecovery(targetEmail);
+        otpId = res.otpId || '';
+        statusRow.textContent = '✅ OTP sent! Check your email.';
+        statusRow.style.color = '#34d399';
+        enableInputs();
+      } catch (e) {
+        statusRow.textContent = '❌ Failed to send OTP: ' + (e.message || 'Network error');
+        statusRow.style.color = '#f87171';
+        // Allow retry via resend button
+        resendBtn.style.color = '#fbbf24';
+        resendBtn.style.cursor = 'pointer';
+      }
+    })();
 
     verifyBtn.onclick = async () => {
+      if (verifyBtn.disabled) return;
       let code = '';
       inputs.forEach(i => code += i.value.trim());
       if (code.length < 6) {
         errLabel.textContent = 'Please enter all 6 digits.';
-        errLabel.classList.remove('hidden');
+        errLabel.style.display = 'block';
         return;
       }
 
-      errLabel.classList.add('hidden');
+      errLabel.style.display = 'none';
       verifyBtn.innerText = 'VERIFYING... ⏳';
       verifyBtn.disabled = true;
 
@@ -8941,22 +8979,37 @@ const ScrapApp = {
         verifyBtn.innerText = 'VERIFY & UNLOCK VAULT 🔑';
         verifyBtn.disabled = false;
         errLabel.textContent = err.message || 'Invalid OTP verification.';
-        errLabel.classList.remove('hidden');
+        errLabel.style.display = 'block';
       }
     };
 
-    modal.querySelector('#otp-resend-btn').onclick = async () => {
-      const resendBtn = modal.querySelector('#otp-resend-btn');
+    resendBtn.onclick = async () => {
+      if (resendBtn.style.cursor === 'default') return;
       resendBtn.innerText = 'Sending...';
+      resendBtn.style.color = '#9ca3af';
+      resendBtn.style.cursor = 'default';
+      statusRow.textContent = '⏳ Resending OTP…';
+      statusRow.style.color = '#fbbf24';
       try {
         const res = await window.ScrapRecovery.requestOtpKeyRecovery(targetEmail);
         otpId = res.otpId || '';
-        resendBtn.innerText = 'Sent! Check inbox';
-        setTimeout(() => resendBtn.innerText = 'Resend Email', 10000);
+        statusRow.textContent = '✅ OTP resent! Check your email.';
+        statusRow.style.color = '#34d399';
+        resendBtn.innerText = 'Sent ✓';
+        setTimeout(() => {
+          resendBtn.innerText = 'Resend Email';
+          resendBtn.style.color = '#fbbf24';
+          resendBtn.style.cursor = 'pointer';
+        }, 10000);
+        enableInputs();
       } catch (err) {
-        resendBtn.innerText = 'Resend Failed';
+        statusRow.textContent = '❌ ' + (err.message || 'Could not resend email.');
+        statusRow.style.color = '#f87171';
+        resendBtn.innerText = 'Retry';
+        resendBtn.style.color = '#fbbf24';
+        resendBtn.style.cursor = 'pointer';
         errLabel.textContent = err.message || 'Could not resend email.';
-        errLabel.classList.remove('hidden');
+        errLabel.style.display = 'block';
       }
     };
   }

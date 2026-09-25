@@ -137,25 +137,35 @@ const ScrapRecovery = {
   },
 
   async requestOtpKeyRecovery(email) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
     try {
       const pbUrl = (window.pb && pb.baseUrl) || 'https://api.myscrapmemories.com';
       const res = await fetch(`${pbUrl}/api/request-vault-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: (email || '').trim().toLowerCase() })
+        body: JSON.stringify({ email: (email || '').trim().toLowerCase() }),
+        signal: controller.signal
       });
+      clearTimeout(timeout);
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.message || 'Failed to request OTP');
       }
       return data; // { success: true, otpId: '...' }
     } catch (e) {
+      clearTimeout(timeout);
+      if (e.name === 'AbortError') {
+        throw new Error('Request timed out. Please check your internet connection and try again.');
+      }
       console.error('[ScrapRecovery] requestOtpKeyRecovery error:', e);
       throw e;
     }
   },
 
   async verifyOtpAndRestoreVault(email, otpCode, otpId = '') {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
     try {
       const pbUrl = (window.pb && pb.baseUrl) || 'https://api.myscrapmemories.com';
       const res = await fetch(`${pbUrl}/api/verify-vault-otp`, {
@@ -165,8 +175,10 @@ const ScrapRecovery = {
           email: (email || '').trim().toLowerCase(),
           otpCode: (otpCode || '').trim(),
           otpId: otpId
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeout);
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.message || 'Invalid OTP verification');
@@ -183,6 +195,10 @@ const ScrapRecovery = {
       }
       return restored;
     } catch (e) {
+      clearTimeout(timeout);
+      if (e.name === 'AbortError') {
+        throw new Error('Request timed out. Please check your internet connection and try again.');
+      }
       console.error('[ScrapRecovery] verifyOtpAndRestoreVault error:', e);
       throw e;
     }
