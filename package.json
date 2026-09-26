@@ -1,6 +1,6 @@
 {
   "name": "mitrava-app",
-  "version": "1.0.12",
+  "version": "1.0.14",
   "description": "Mitrava - Visual Multiplayer E2EE Collage Board",
   "main": "www/index.html",
   "scripts": {

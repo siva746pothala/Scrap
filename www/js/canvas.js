@@ -2451,20 +2451,21 @@ const ScrapCanvas = {
   },
 
   getCanvasFilterString(style) {
-    if (!style) return 'none';
+    if (!style || style === 'none') return 'none';
     const s = String(style).toLowerCase();
-    if (s.includes('vintage') || s.includes('grain')) return 'sepia(65%) contrast(115%) brightness(105%) saturate(120%) hue-rotate(-12deg)';
-    if (s.includes('neon') || s.includes('cyberpunk')) return 'contrast(145%) saturate(260%) hue-rotate(285deg) brightness(110%)';
-    if (s.includes('glitch')) return 'contrast(135%) saturate(190%) hue-rotate(85deg)';
-    if (s.includes('noir')) return 'grayscale(100%) contrast(190%) brightness(88%)';
-    if (s.includes('cel') || s.includes('shade')) return 'contrast(108%) saturate(100%) brightness(100%)';
-    if (s.includes('gray') || s.includes('bw') || s.includes('mono')) return 'grayscale(100%) contrast(125%)';
-    if (s.includes('sepia')) return 'sepia(80%) contrast(110%)';
-    if (s.includes('warm') || s.includes('golden')) return 'sepia(40%) saturate(170%) contrast(110%) hue-rotate(-10deg)';
-    if (s.includes('cold')) return 'hue-rotate(180deg) saturate(120%)';
-    if (s.includes('cyber')) return 'hue-rotate(270deg) contrast(140%) saturate(160%)';
-    if (s.includes('dramatic')) return 'contrast(160%) brightness(90%) saturate(130%)';
-    if (s.includes('retro') || s.includes('vhs')) return 'sepia(50%) contrast(120%) hue-rotate(-20deg)';
+    // Exact filter strings that match app.css CSS filter classes
+    if (s === 'vintage-grain' || (s.includes('vintage') || s.includes('grain'))) return 'sepia(0.65) contrast(1.15) brightness(1.05) saturate(1.2) hue-rotate(-12deg)';
+    if (s === 'neon-glow' || s === 'cyberpunk' || s.includes('neon')) return 'contrast(1.45) saturate(2.6) hue-rotate(285deg) brightness(1.1)';
+    if (s === 'glitch-art' || s.includes('glitch')) return 'contrast(1.35) saturate(1.9) hue-rotate(85deg)';
+    if (s === 'noir-bw' || (s.includes('noir') && s.includes('bw'))) return 'grayscale(1) contrast(1.9) brightness(0.88)';
+    if (s === 'cel-shade' || (s.includes('cel') && s.includes('shade'))) return 'contrast(1.08) saturate(1.0) brightness(1.0)';
+    if (s === 'mono' || s.includes('mono')) return 'grayscale(1) contrast(1.25) brightness(1.05)';
+    if (s === 'golden-hour' || s.includes('golden')) return 'sepia(0.4) saturate(1.7) contrast(1.1) hue-rotate(-10deg)';
+    if (s === 'cyber-matrix' || s.includes('cyber')) return 'grayscale(1) brightness(1.2) contrast(1.4) sepia(1) hue-rotate(80deg) saturate(3.5)';
+    if (s === 'retro-vhs' || (s.includes('retro') || s.includes('vhs'))) return 'contrast(1.1) saturate(0.8) brightness(1.05)';
+    if (s === 'vaporwave' || s.includes('vaporwave')) return 'hue-rotate(60deg) saturate(1.8) contrast(1.2)';
+    if (s === 'matcha' || s.includes('matcha')) return 'sepia(0.55) hue-rotate(55deg) saturate(1.35) contrast(0.95)';
+    if (s.includes('gray') || s.includes('bw')) return 'grayscale(1) contrast(1.25)';
     if (s.includes('invert')) return 'invert(100%)';
     return 'none';
   },
@@ -2673,6 +2674,105 @@ const ScrapCanvas = {
     }).catch(err => {
       console.warn('[decryptAndDisplayImage] Queue error:', err);
     });
+  },
+
+  /**
+   * decryptForExport — direct, truly-awaitable decrypt path used exclusively during
+   * PNG canvas export. Unlike decryptAndDisplayImage() which enqueues work via .then()
+   * and returns before the inner async work completes, this function directly awaits
+   * the download + decryption and stores the result in elements[id]._decryptedDataUrl.
+   */
+  async decryptForExport(id, encryptedDataOrFileId) {
+    const elData = (this.elements && this.elements[id]) ? this.elements[id] : {};
+
+    // 1. Already cached in memory — nothing to do
+    if (elData._decryptedDataUrl) return;
+
+    // 2. Direct URL / local path / data URI — no decryption needed
+    let directUrl = elData.url || elData.localPath || elData.src || elData.dataUrl;
+    const targetRef = (elData.fileId && elData.fileId.trim())
+      ? elData.fileId.trim()
+      : ((typeof encryptedDataOrFileId === 'string' && encryptedDataOrFileId.trim())
+        ? encryptedDataOrFileId.trim()
+        : (elData._pendingFileName || ''));
+
+    if (!directUrl && targetRef) {
+      if (
+        targetRef.startsWith('http:') ||
+        targetRef.startsWith('https:') ||
+        targetRef.startsWith('data:') ||
+        targetRef.startsWith('file:') ||
+        targetRef.startsWith('cdvfile:') ||
+        targetRef.startsWith('capacitor:')
+      ) {
+        directUrl = targetRef;
+      }
+    }
+
+    if (directUrl) {
+      if (this.elements && this.elements[id]) {
+        this.elements[id]._decryptedDataUrl = directUrl;
+      }
+      // Also update DOM img if present
+      const domEl = document.getElementById(`element-${id}`);
+      const img = domEl ? domEl.querySelector('img') : null;
+      if (img) { img.src = directUrl; img.classList.remove('hidden'); }
+      return;
+    }
+
+    // 3. Encrypted data — download + decrypt directly (no queue)
+    if (!targetRef) return;
+    try {
+      const isFileId = targetRef.length < 200;
+      let encryptedBuffer;
+      if (isFileId) {
+        encryptedBuffer = await ScrapDrive.downloadFile(targetRef);
+      } else {
+        encryptedBuffer = ScrapCrypto.base64ToArrayBuffer(targetRef);
+      }
+
+      const getRoomId = () =>
+        (window.ScrapApp && window.ScrapApp.currentRoomId) ||
+        ScrapFirebase.roomId ||
+        null;
+
+      let roomId = getRoomId();
+      let roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+      if (!roomKey) {
+        await new Promise(r => setTimeout(r, 600));
+        roomId = getRoomId();
+        roomKey = roomId ? await ScrapRecovery.getRoomKey(roomId) : null;
+      }
+
+      let url = '';
+      try {
+        if (roomKey && encryptedBuffer) {
+          const decrypted = await ScrapCrypto.decryptData(encryptedBuffer, roomKey);
+          const base64 = ScrapCrypto.arrayBufferToBase64(decrypted);
+          url = `data:image/jpeg;base64,${base64}`;
+        }
+      } catch (_) {
+        // Fallback: buffer may be unencrypted raw image bytes
+        if (encryptedBuffer) {
+          const base64 = ScrapCrypto.arrayBufferToBase64(encryptedBuffer);
+          url = `data:image/jpeg;base64,${base64}`;
+        }
+      }
+
+      if (url) {
+        if (this.elements && this.elements[id]) {
+          this.elements[id]._decryptedDataUrl = url;
+        }
+        // Also update the DOM img element if present so the board stays in sync
+        const domEl = document.getElementById(`element-${id}`);
+        const img = domEl ? domEl.querySelector('img') : null;
+        if (img) { img.src = url; img.classList.remove('hidden'); }
+        const loader = domEl ? domEl.querySelector('.loading-label') : null;
+        if (loader) loader.classList.add('hidden');
+      }
+    } catch (err) {
+      console.warn(`[decryptForExport] Failed for photo ${id}:`, err);
+    }
   },
 
   drawDoodleOnElementCanvas(canvas, pointsOrElement, color) {
@@ -5817,27 +5917,37 @@ const ScrapCanvas = {
       throw new Error('No items found on canvas board to export.');
     }
 
-    // Guarantee all target photos are 100% decrypted before generating PNG screenshot
+    // Guarantee all target photos are 100% decrypted before generating PNG screenshot.
+    // Uses decryptForExport() which directly awaits decryption instead of the internal
+    // queue used by decryptAndDisplayImage() (which doesn't return an awaitable promise).
     const decryptPromises = targetKeys.map(async (id) => {
       const data = this.elements[id];
       if (!data || (data.type !== 'photo' && data.type !== 'image')) return;
 
+      // Skip if already decrypted and cached in memory
+      if (data._decryptedDataUrl) return;
+
+      // Also check if DOM img is already loaded and visible
       const domEl = document.getElementById(`element-${id}`);
       const photoImg = domEl ? domEl.querySelector('img') : null;
-
-      // Skip if already decrypted in memory or DOM
-      if (data._decryptedDataUrl || (photoImg && photoImg.src && photoImg.src.length > 50 && !photoImg.classList.contains('hidden'))) {
+      if (photoImg && !photoImg.classList.contains('hidden') && photoImg.src && photoImg.src.startsWith('data:')) {
+        // Sync decrypted src back to element cache so export can use it
+        this.elements[id]._decryptedDataUrl = photoImg.src;
         return;
       }
 
-      if (data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl) {
+      const ref = data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl;
+      if (ref) {
         try {
-          await this.decryptAndDisplayImage(id, data.encryptedData || data.fileId || data.url || data.localPath || data.src || data.dataUrl, domEl || document.body);
+          await this.decryptForExport(id, ref);
         } catch (_) {}
       }
     });
 
     await Promise.all(decryptPromises);
+
+    // Small additional wait to let any in-flight decryptions settle
+    await new Promise(r => setTimeout(r, 300));
 
     // Calculate exact bounding box of visible canvas items (accounting for DOM dimensions, scale, rotation & doodles)
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
